@@ -1,0 +1,5 @@
+pygame-ce>=2.5.3,<3
+PyOpenGL>=3.1.9,<4
+numpy>=2.0,<3
+trimesh>=4.6,<6
+Pillow>=11,<13

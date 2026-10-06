@@ -1,0 +1,8 @@
+[
+ {"id":"sword","name":"서리검","cost":850,"description":"공격력 +25","damage":25},
+ {"id":"crystal","name":"별빛 수정","cost":900,"description":"주문력 +45 · 마나 +100","power":45,"mana":100},
+ {"id":"armor","name":"빙하 갑옷","cost":950,"description":"체력 +280 · 방어력 +25","hp":280,"armor":25},
+ {"id":"boots","name":"눈길 장화","cost":600,"description":"이동 속도 +0.8 (1개 제한)","speed":0.8,"unique":true},
+ {"id":"bow","name":"오로라 활","cost":1050,"description":"공격력 +15 · 공격 속도 +25%","damage":15,"haste":0.25},
+ {"id":"crown","name":"겨울 왕관","cost":1800,"description":"주문력 +85 · 체력 +180","power":85,"hp":180}
+]
