@@ -1,8 +1,17 @@
 [
- {"id":"sword","name":"서리검","cost":850,"description":"공격력 +25","damage":25},
- {"id":"crystal","name":"별빛 수정","cost":900,"description":"주문력 +45 · 마나 +100","power":45,"mana":100},
- {"id":"armor","name":"빙하 갑옷","cost":950,"description":"체력 +280 · 방어력 +25","hp":280,"armor":25},
- {"id":"boots","name":"눈길 장화","cost":600,"description":"이동 속도 +0.8 (1개 제한)","speed":0.8,"unique":true},
- {"id":"bow","name":"오로라 활","cost":1050,"description":"공격력 +15 · 공격 속도 +25%","damage":15,"haste":0.25},
- {"id":"crown","name":"겨울 왕관","cost":1800,"description":"주문력 +85 · 체력 +180","power":85,"hp":180}
+  {"id": "long_sword",    "name": "단련된 검",       "cost": 350,  "color": [200, 160, 90],  "stats": {"ad": 10}},
+  {"id": "dagger",        "name": "날쌘 단검",       "cost": 300,  "color": [230, 200, 120], "stats": {"attack_speed": 0.12}},
+  {"id": "ruby",          "name": "붉은 수정",       "cost": 400,  "color": [220, 70, 70],   "stats": {"hp": 150}},
+  {"id": "tome",          "name": "증폭의 서",       "cost": 435,  "color": [120, 110, 230], "stats": {"ap": 20}},
+  {"id": "cloth",         "name": "누빔 갑옷",       "cost": 300,  "color": [160, 160, 170], "stats": {"armor": 15}},
+  {"id": "cloak",         "name": "마력 차단 망토",  "cost": 450,  "color": [110, 190, 170], "stats": {"mr": 25}},
+  {"id": "swift_boots",   "name": "질풍의 장화",     "cost": 1100, "color": [150, 220, 255], "stats": {"move_speed": 0.45, "attack_speed": 0.25}},
+  {"id": "frost_edge",    "name": "서리칼날",        "cost": 3100, "color": [140, 210, 255], "stats": {"ad": 55, "crit": 0.25, "ability_haste": 10}},
+  {"id": "storm_bow",     "name": "폭풍의 활",       "cost": 2800, "color": [250, 230, 120], "stats": {"attack_speed": 0.40, "crit": 0.25, "move_speed": 0.07}},
+  {"id": "ice_reaper",    "name": "빙결 수확자",     "cost": 3400, "color": [90, 150, 255],  "stats": {"ad": 65, "crit": 0.25}},
+  {"id": "blood_fang",    "name": "피의 송곳니",     "cost": 3000, "color": [190, 40, 60],   "stats": {"ad": 50, "life_steal": 0.18}},
+  {"id": "arcane_crown",  "name": "비전의 왕관",     "cost": 3600, "color": [170, 100, 255], "stats": {"ap": 120, "ability_haste": 15}},
+  {"id": "guardian_mail", "name": "수호자의 흉갑",   "cost": 2900, "color": [180, 180, 200], "stats": {"hp": 400, "armor": 50}},
+  {"id": "spirit_cloak",  "name": "정령의 외투",     "cost": 2900, "color": [120, 230, 200], "stats": {"hp": 400, "mr": 50, "hp_regen": 6}},
+  {"id": "titan_heart",   "name": "거신의 심장",     "cost": 3000, "color": [230, 110, 90],  "stats": {"hp": 800, "hp_regen": 10}}
 ]

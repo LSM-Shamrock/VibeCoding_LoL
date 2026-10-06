@@ -1,15 +1,16 @@
-"""Standalone lobby and authoritative match server (no graphics required)."""
-import argparse
-from frostbridge.network import GameServer
+"""전용 서버만 실행 (화면 없음).
+
+    py server.py [포트]
+
+클라이언트의 '서버 열고 시작' 버튼을 쓰면 이 파일을 따로 실행할 필요는 없다.
+"""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from game.server.server import run_dedicated  # noqa: E402
+from game.shared.constants import DEFAULT_PORT  # noqa: E402
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Frostbridge lobby server")
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=27355)
-    args = parser.parse_args()
-    server = GameServer(args.host, args.port)
-    print(f"Frostbridge listening on {args.host}:{server.port}", flush=True)
-    try:
-        server.run()
-    except KeyboardInterrupt:
-        server.stop()
+    run_dedicated(int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PORT)

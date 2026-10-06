@@ -1,6 +1,33 @@
-.venv/
+# Python
 __pycache__/
 *.py[cod]
+*.egg-info/
 .pytest_cache/
-artifacts/
+.mypy_cache/
+.ruff_cache/
+
+# 가상환경
+.venv/
+venv/
+env/
+
+# 빌드 / 배포 (PyInstaller 등)
+build/
+dist/
+*.spec
+
+# IDE / 에디터
+.vscode/
+.idea/
+*.swp
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# 자동 테스트 스크린샷 (py main.py --autotest shots)
+shots/
+
+# 로그
 *.log

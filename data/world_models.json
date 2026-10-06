@@ -1,0 +1,10 @@
+{
+  "_설명": "null 이면 코드로 만든 기본 도형을 사용합니다. 모델 파일을 구하면 {\"file\": \"assets/models/....glb\", \"height\": 1.0, \"rotation_y\": 0} 형식으로 지정하세요.",
+  "minion_melee": null,
+  "minion_caster": null,
+  "minion_cannon": null,
+  "minion_super": null,
+  "turret": null,
+  "inhibitor": null,
+  "nexus": null
+}
