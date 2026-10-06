@@ -83,7 +83,15 @@ class AutoTest:
                 sc.shop_open = False
             if st > 3.5 and self.once("walk"):
                 d = 1 if sc.my_team == 0 else -1
-                sc.send_cmd(c="move", x=-24 * d, z=1.0)
+                sc.issue_move(-24 * d, 1.0)
+            if st > 4.2 and self.once("marker"):
+                self.snap("05b_move_marker")
+                print("[autotest] window", app.renderer.window_size, "viewport", app.renderer.viewport, "fullscreen", app.fullscreen, flush=True)
+            if st > 5.0 and self.once("mm"):
+                sc.minimap_camera((1200, 660))
+            if st > 5.3 and self.once("mmshot"):
+                self.snap("05c_minimap_cam")
+                sc.cam_locked = True
             if st > 24 and self.once("g2"):
                 self.snap("06_lane")
             if st > 30 and self.once("amove"):

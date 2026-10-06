@@ -6,10 +6,12 @@
   "color": [120, 200, 255],
 
   "model": {
-    "file": "assets/models/champions/frost_archer/model.obj",
+    "file": "assets/models/champions/frost_archer/kenney/character-m.obj",
     "height": 1.9,
     "rotation_y": 0,
-    "offset": [0, 0, 0]
+    "offset": [0, 0, 0],
+    "pixelated": true,
+    "_출처": "Kenney Blocky Characters (CC0) character-m / 이전 임시 모델: assets/models/champions/frost_archer/model.obj"
   },
 
   "stats": {

@@ -261,7 +261,7 @@ class ModelLibrary:
         cfg = cfg or {}
         full = resolve_path(path)
         key = (full, cfg.get("height"), cfg.get("rotation_y"), tuple(cfg.get("offset", (0, 0, 0))), cfg.get("scale"),
-               cfg.get("up_axis"))
+               cfg.get("up_axis"), cfg.get("pixelated"))
         if key in self.cache:
             return self.cache[key]
         mesh = None
@@ -282,7 +282,8 @@ class ModelLibrary:
                                  cfg.get("offset", (0, 0, 0)), cfg.get("scale"), cfg.get("up_axis", "y"))
                 gpu_parts = []
                 for (arr, _), (_, surf) in zip(arrs, parts):
-                    tex = self.r.make_texture(surf) if surf is not None else None
+                    tex = (self.r.make_texture(surf, pixelated=cfg.get("pixelated", False))
+                           if surf is not None else None)
                     gpu_parts.append((arr, tex))
                 allarr = np.concatenate([a for a, _ in arrs])
                 mesh = Mesh(self.r, gpu_parts, bounds_of(allarr))

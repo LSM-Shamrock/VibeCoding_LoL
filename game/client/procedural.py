@@ -221,16 +221,31 @@ def build_shadow():
 
 
 # ------------------------------------------------------------------ 맵
+PANEL_A = (0.26, 0.29, 0.36)
+PANEL_B = (0.235, 0.265, 0.335)
+HULL = (0.11, 0.12, 0.17)
+GLOW = (0.45, 0.95, 1.0)
+
+
+def _edge_box(b, p0, p1, y, size_y, size_z, color):
+    """두 점 p0-p1 (xz) 을 잇는 방향으로 놓인 박스."""
+    dx, dz = p1[0] - p0[0], p1[1] - p0[1]
+    length = math.hypot(dx, dz)
+    ang = math.atan2(-dz, dx)
+    b.box(((p0[0] + p1[0]) / 2, y, (p0[1] + p1[1]) / 2), (length + 0.02, size_y, size_z), color, rot_y=ang)
+
+
 def build_map():
-    """칼바람 나락 모티브의 정적 지형."""
+    """우주에 떠 있는 플랫폼 라인 (칼바람 나락 배치 그대로)."""
     rng = random.Random(42)
     b = MeshBuilder()
-    # 바깥 지면
-    b.rect_xz(-90, -40, 90, 40, -0.05, (0.16, 0.19, 0.26))
-    # 라인 (눈 덮인 길)
+    end = mapdata.LANE_END
+    depth = 1.4
     step = 2.0
-    x = -mapdata.LANE_END
-    while x < mapdata.LANE_END - 1e-6:
+
+    # 라인 바닥 패널 + 옆면(두께)
+    x, ix = -end, 0
+    while x < end - 1e-6:
         x1 = x + step
         hw0, hw1 = mapdata.half_width(x), mapdata.half_width(x1)
         cols = 6
@@ -238,53 +253,75 @@ def build_map():
             t0, t1 = c / cols, (c + 1) / cols
             za0, za1 = -hw0 + 2 * hw0 * t0, -hw0 + 2 * hw0 * t1
             zb0, zb1 = -hw1 + 2 * hw1 * t0, -hw1 + 2 * hw1 * t1
-            shade = rng.uniform(-0.015, 0.015)
-            mid = abs((t0 + t1) / 2 - 0.5)
-            base = (0.6 + shade - mid * 0.1, 0.66 + shade - mid * 0.08, 0.76 + shade - mid * 0.04)
+            base = PANEL_A if (ix + c) % 2 == 0 else PANEL_B
+            shade = rng.uniform(-0.012, 0.012)
+            base = tuple(v + shade for v in base)
             n = (0, 1, 0)
             b.tri((x, 0, za0), (x1, 0, zb1), (x1, 0, zb0), base, n, n, n)
             b.tri((x, 0, za0), (x, 0, za1), (x1, 0, zb1), base, n, n, n)
+        for side in (-1, 1):
+            a0, a1 = (x, side * hw0), (x1, side * hw1)
+            # 옆면
+            b.quad((a0[0], 0, a0[1]), (a1[0], 0, a1[1]), (a1[0], -depth, a1[1]), (a0[0], -depth, a0[1]), HULL)
+            # 안쪽 유도선 (은은한 발광)
+            _edge_box(b, (x, side * (hw0 - 0.6)), (x1, side * (hw1 - 0.6)), 0.005, 0.01, 0.1, (0.25, 0.55, 0.7))
+            # 난간 + 발광 띠
+            _edge_box(b, (x, side * (hw0 + 0.25)), (x1, side * (hw1 + 0.25)), 0.2, 0.4, 0.3, (0.33, 0.36, 0.45))
+            _edge_box(b, (x, side * (hw0 + 0.25)), (x1, side * (hw1 + 0.25)), 0.43, 0.06, 0.14, GLOW)
+        # 바닥면
+        b.quad((x, -depth, -hw0), (x1, -depth, -hw1), (x1, -depth, hw1), (x, -depth, hw0), HULL)
         x = x1
+        ix += 1
+    # 양 끝 마감
+    for sx in (-1, 1):
+        hw = mapdata.half_width(end)
+        b.quad((sx * end, 0, -hw), (sx * end, 0, hw), (sx * end, -depth, hw), (sx * end, -depth, -hw), HULL)
+
+    # 가장자리 기둥 + 조명
+    for k in range(-6, 7):
+        px = k * 10.0
+        for side in (-1, 1):
+            hw = mapdata.half_width(px)
+            pz = side * (hw + 0.35)
+            b.box((px, 0.8, pz), (0.55, 1.6, 0.55), (0.3, 0.33, 0.42), taper=0.7)
+            b.octahedron((px, 1.85, pz), 0.22, 0.5, GLOW, seg=4)
+
+    # 플랫폼 아래 구조물 (엔진 / 지지대)
+    for k in range(-11, 12):
+        px = k * 5.5 + rng.uniform(-1, 1)
+        hw = mapdata.half_width(px)
+        w = rng.uniform(1.5, 3.0)
+        h = rng.uniform(1.5, 4.0)
+        pz = rng.uniform(-hw * 0.6, hw * 0.6)
+        b.box((px, -depth - h / 2, pz), (w, h, w * rng.uniform(1.0, 2.2)), HULL, taper=rng.uniform(1.4, 2.0))
+        if rng.random() < 0.5:
+            b.octahedron((px, -depth - h - 0.3, pz), 0.35, 0.6, (0.4, 0.7, 1.0), seg=6)
+
     # 우물 발판
     for team in (0, 1):
         fx, fz = mapdata.fountain_pos(team)
         tc = TEAM_COLORS[team]
-        b.cylinder((fx, -0.3, fz), 8.0, 0.33, _mix(tc, STONE_DARK, 0.7), seg=24, smooth=False)
+        b.cylinder((fx, -depth, fz), 8.0, depth + 0.02, _mix(tc, HULL, 0.75), seg=24, smooth=False)
+        b.cylinder((fx, -depth - 2.5, fz), 3.0, 2.5, HULL, seg=12, radius_top=6.0, smooth=False)
         b.ring((fx, 0.04, fz), 6.8, 7.4, _mix(tc, (1, 1, 1), 0.3))
         for k in range(8):
             a = k / 8 * math.tau
-            b.box((fx + math.cos(a) * 8.6, 1.2, fz + math.sin(a) * 8.6), (0.6, 2.4, 0.6), STONE, taper=0.5)
+            b.box((fx + math.cos(a) * 8.6, 1.2, fz + math.sin(a) * 8.6), (0.5, 2.4, 0.5), (0.3, 0.33, 0.42), taper=0.5)
+            b.octahedron((fx + math.cos(a) * 8.6, 2.6, fz + math.sin(a) * 8.6), 0.2, 0.45, _mix(tc, (1, 1, 1), 0.4), seg=4)
         b.octahedron((fx + mapdata.team_dir(team) * -2.0, 2.5, fz), 0.7, 2.0, _mix(tc, (1, 1, 1), 0.4), seg=6)
-    # 라인 가장자리 바위 / 절벽
-    x = -mapdata.LANE_END - 6
-    while x <= mapdata.LANE_END + 6:
-        for side in (-1, 1):
-            hw = mapdata.half_width(max(-mapdata.LANE_END, min(mapdata.LANE_END, x)))
-            z = side * (hw + 0.9 + rng.uniform(0, 0.6))
-            h = rng.uniform(1.2, 3.2)
-            w = rng.uniform(1.6, 2.6)
-            col = _mix(STONE_DARK, STONE, rng.uniform(0, 0.5))
-            b.box((x, h / 2 - 0.1, z), (w, h, rng.uniform(1.4, 2.2)), col, rot_y=rng.uniform(-0.4, 0.4),
-                  taper=rng.uniform(0.55, 0.85))
-            b.box((x, h - 0.05, z), (w * 0.62, 0.22, 1.0), SNOW, rot_y=rng.uniform(-0.4, 0.4), taper=0.7)
-            # 뒤쪽 큰 절벽
-            z2 = side * (hw + 3.5 + rng.uniform(0, 2))
-            h2 = rng.uniform(3.5, 7.0)
-            b.box((x, h2 / 2 - 0.1, z2), (rng.uniform(2.5, 4), h2, rng.uniform(2.5, 4)),
-                  _mix(STONE_DARK, (0.2, 0.24, 0.32), rng.uniform(0, 1)), rot_y=rng.uniform(-0.6, 0.6),
-                  taper=rng.uniform(0.4, 0.7))
-        x += rng.uniform(1.8, 2.6)
-    # 침엽수
-    for _ in range(140):
-        x = rng.uniform(-80, 80)
-        side = rng.choice((-1, 1))
-        hw = mapdata.half_width(max(-mapdata.LANE_END, min(mapdata.LANE_END, x)))
-        z = side * rng.uniform(hw + 6, hw + 22)
-        s = rng.uniform(0.8, 1.6)
-        b.cylinder((x, 0, z), 0.18 * s, 0.8 * s, (0.3, 0.22, 0.18), seg=6)
-        green = (0.12, 0.25 + rng.uniform(0, 0.08), 0.28)
-        for k in range(3):
-            y = (0.6 + k * 0.8) * s
-            b.cone((x, y, z), (1.1 - k * 0.28) * s, 1.3 * s, green, seg=7)
-            b.cone((x, y + 0.75 * s, z), (0.55 - k * 0.14) * s, 0.55 * s, SNOW, seg=7)
+
+    # 주변을 떠다니는 소행성
+    rock_a, rock_b = (0.3, 0.28, 0.3), (0.48, 0.44, 0.42)
+    for _ in range(110):
+        if rng.random() < 0.65:
+            side = rng.choice((-1, 1))
+            pos = (rng.uniform(-120, 120), rng.uniform(-28, 3), side * rng.uniform(17, 65))
+        else:
+            pos = (rng.uniform(-110, 110), rng.uniform(-50, -12), rng.uniform(-16, 16))
+        r = rng.uniform(0.5, 3.6)
+        col = _mix(rock_a, rock_b, rng.random())
+        b.sphere(pos, r, col, seg=7, rings=5,
+                 scale=(rng.uniform(0.7, 1.4), rng.uniform(0.6, 1.1), rng.uniform(0.7, 1.4)))
+        if rng.random() < 0.25:
+            b.octahedron((pos[0], pos[1] + r * 0.8, pos[2]), r * 0.25, r * 0.9, (0.5, 0.9, 1.0), seg=5)
     return b

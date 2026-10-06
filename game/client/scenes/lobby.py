@@ -89,7 +89,7 @@ class LobbyScene(Scene):
         for r in self.app.rooms[:12]:
             rect = pygame.Rect(82, y, 656, 32)
             sel = r["id"] == self.selected
-            hover = rect.collidepoint(pygame.mouse.get_pos())
+            hover = rect.collidepoint(ui.mouse_pos())
             if sel or hover:
                 pygame.draw.rect(surf, (50, 90, 150, 200) if sel else (40, 60, 90, 160), rect, border_radius=4)
             ui.text(surf, r["name"], (95, y + 16), 16, anchor="midleft")

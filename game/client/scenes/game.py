@@ -73,6 +73,9 @@ class CEnt:
 
 
 class GameScene(Scene):
+    fullscreen = True       # 인게임은 전체 화면 (Alt+Enter 로 전환 가능)
+    grab_mouse = True       # 커서를 화면 안에 가둬 화면 끝 카메라 이동이 되게
+
     def __init__(self, app, start):
         super().__init__(app)
         self.structs = {s["i"]: s for s in start["structures"]}
@@ -104,6 +107,9 @@ class GameScene(Scene):
         self.rmb_repeat = 0.0
         self.hover = None
         self.click_marker = None
+        self.move_dest = None       # 이동 목적지 (도착할 때까지 바닥에 표시)
+        self.minimap_drag = False   # 미니맵을 좌클릭한 채로 끌면 카메라 이동
+        self.rmb_minimap = False    # 미니맵을 우클릭한 채로 있으면 계속 이동 명령
         self.shop_rects = []
         self.inv_rects = []
         self.levelup_rects = []
@@ -135,7 +141,7 @@ class GameScene(Scene):
         return gamedata.champion(self.champ_info[self.my_id]["c"]) if self.my_id else None
 
     def mouse_pos(self):
-        return self.fake_mouse or pygame.mouse.get_pos()
+        return self.fake_mouse or ui.mouse_pos()
 
     def mouse_ground(self):
         mx, my = self.mouse_pos()
@@ -319,10 +325,19 @@ class GameScene(Scene):
         if hov and self.enemy_targetable(*hov):
             if not repeat:
                 self.send_cmd(c="attack", id=hov[1])
+                self.move_dest = None
             return
         x, z = self.mouse_ground()
-        self.send_cmd(c="move", x=round(x, 2), z=round(z, 2))
-        if not repeat:
+        self.issue_move(x, z, marker=not repeat)
+
+    def issue_move(self, x, z, cmd="move", marker=True):
+        """이동 명령 + 바닥 이동 지점 표시."""
+        if self.my_id is None or not self.me or self.me["dead"]:
+            return
+        x, z = mapdata.clamp_to_map(x, z, 0.5)
+        self.send_cmd(c=cmd, x=round(x, 2), z=round(z, 2))
+        self.move_dest = (x, z)
+        if marker:
             self.click_marker = (x, z, time.time())
 
     def cast_slot(self, slot):
@@ -351,6 +366,7 @@ class GameScene(Scene):
                 self.send_cmd(c="spell", slot="F", x=round(x, 2), z=round(z, 2))
             elif e.key == pygame.K_s:
                 self.send_cmd(c="stop")
+                self.move_dest = None
             elif e.key == pygame.K_a:
                 self.amove_pending = True
             elif e.key in (pygame.K_b, pygame.K_p):
@@ -378,25 +394,32 @@ class GameScene(Scene):
                     self.aiming = None
                 elif self.amove_pending:
                     x, z = self.mouse_ground()
-                    self.send_cmd(c="amove", x=round(x, 2), z=round(z, 2))
-                    self.click_marker = (x, z, time.time())
+                    self.issue_move(x, z, cmd="amove")
                     self.amove_pending = False
             elif e.button == 3:
                 self.aiming = None
                 self.amove_pending = False
                 if MINIMAP.collidepoint(e.pos):
                     x, z = self.minimap_to_world(*e.pos)
-                    self.send_cmd(c="move", x=round(x, 2), z=round(z, 2))
-                    self.click_marker = (x, z, time.time())
+                    self.issue_move(x, z)
+                    self.rmb_down = True
+                    self.rmb_minimap = True
+                    self.rmb_repeat = 0.15
                     return
                 if self.shop_open and self.shop_panel().collidepoint(e.pos):
                     self.shop_right_click(e.pos)
                     return
                 self.rmb_down = True
+                self.rmb_minimap = False
                 self.rmb_repeat = 0.15
                 self.right_click()
         elif e.type == pygame.MOUSEBUTTONUP and e.button == 3:
             self.rmb_down = False
+            self.rmb_minimap = False
+        elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
+            self.minimap_drag = False
+        elif e.type == pygame.MOUSEMOTION and self.minimap_drag:
+            self.minimap_camera(e.pos)
         elif e.type == pygame.MOUSEWHEEL:
             self.zoom = max(16.0, min(36.0, self.zoom - e.y * 2.0))
 
@@ -415,14 +438,21 @@ class GameScene(Scene):
                         self.send_cmd(c="sell", slot=i)
                 return True
         if MINIMAP.collidepoint(pos):
-            x, z = self.minimap_to_world(*pos)
-            cam = self.app.renderer.camera
-            cam.tx, cam.tz = x, z
-            self.cam_locked = False
+            self.minimap_drag = True
+            self.minimap_camera(pos)
             return True
         if HUD_RECT.collidepoint(pos):
             return True
         return False
+
+    def minimap_camera(self, pos):
+        """미니맵 위치로 카메라 이동 (미니맵 밖으로 끌어도 가장자리까지 따라감)."""
+        px = max(MINIMAP.left, min(MINIMAP.right - 1, pos[0]))
+        py = max(MINIMAP.top, min(MINIMAP.bottom - 1, pos[1]))
+        x, z = self.minimap_to_world(px, py)
+        cam = self.app.renderer.camera
+        cam.tx, cam.tz = x, z
+        self.cam_locked = False
 
     def shop_right_click(self, pos):
         for iid, rect in self.shop_rects:
@@ -441,7 +471,23 @@ class GameScene(Scene):
             self.rmb_repeat -= dt
             if self.rmb_repeat <= 0:
                 self.rmb_repeat = 0.15
-                self.right_click(repeat=True)
+                if self.rmb_minimap:
+                    mp = ui.mouse_pos()
+                    if MINIMAP.collidepoint(mp):
+                        self.issue_move(*self.minimap_to_world(*mp), marker=False)
+                else:
+                    self.right_click(repeat=True)
+        if self.minimap_drag:
+            if pygame.mouse.get_pressed()[0]:
+                self.minimap_camera(ui.mouse_pos())
+            else:
+                self.minimap_drag = False
+
+        # 목적지 도착 / 사망 시 이동 표시 제거
+        me = self.champs.get(self.my_id)
+        if self.move_dest and (not me or not me.d or me.d["dead"]
+                               or math.hypot(me.x - self.move_dest[0], me.z - self.move_dest[1]) < 0.6):
+            self.move_dest = None
 
         cam = self.app.renderer.camera
         cam.distance += (self.zoom - cam.distance) * min(1.0, dt * 10)
@@ -450,20 +496,20 @@ class GameScene(Scene):
         if me and (self.cam_locked or keys[pygame.K_SPACE]):
             cam.tx += (me.x - cam.tx) * min(1.0, dt * 10)
             cam.tz += (me.z - cam.tz) * min(1.0, dt * 10)
-        else:
-            mx, my = pygame.mouse.get_pos()
-            speed = 30.0 * dt
-            focused = pygame.mouse.get_focused()
-            if keys[pygame.K_LEFT] or (focused and mx <= 4):
-                cam.tx -= speed
-            if keys[pygame.K_RIGHT] or (focused and mx >= WIDTH - 5):
-                cam.tx += speed
-            if keys[pygame.K_UP] or (focused and my <= 4):
-                cam.tz -= speed
-            if keys[pygame.K_DOWN] or (focused and my >= HEIGHT - 5):
-                cam.tz += speed
-            cam.tx = max(-70, min(70, cam.tx))
-            cam.tz = max(-15, min(15, cam.tz))
+        elif not self.minimap_drag:
+            # 롤처럼 커서를 화면 끝에 대면 그 방향으로 카메라 이동 (방향키도 가능)
+            ex, ey = self.app.mouse_edge()
+            if keys[pygame.K_LEFT]:
+                ex = -1
+            if keys[pygame.K_RIGHT]:
+                ex = 1
+            if keys[pygame.K_UP]:
+                ey = -1
+            if keys[pygame.K_DOWN]:
+                ey = 1
+            speed = 32.0 * dt * (cam.distance / 22.0)
+            cam.tx = max(-70, min(70, cam.tx + ex * speed))
+            cam.tz = max(-15, min(15, cam.tz + ey * speed))
 
         now = time.time()
         self.fx = [f for f in self.fx if now - f["t"] < f["dur"]]
@@ -618,13 +664,21 @@ class GameScene(Scene):
                     r.draw(m.relic, model_matrix(f["x"] + math.cos(a) * rr, (1 - k) * 2.5, f["z"] + math.sin(a) * rr,
                                                  scale=0.4, rot_y=a), tint=(0.8, 0.95, 1.2, 1), emissive=(0.3, 0.4, 0.5))
 
-        # 클릭 표시
+        # 클릭 표시 (줄어드는 고리) + 도착할 때까지 남는 목적지 표시
         if self.click_marker:
             x, z, ct = self.click_marker
-            k = (now - ct) / 0.4
+            k = (now - ct) / 0.45
             if k < 1:
-                col = (1.0, 0.4, 0.3) if self.amove_pending else (0.5, 1.0, 0.5)
-                r.draw_transparent(m.ring, model_matrix(x, 0.06, z, scale=0.6 * (1 - k) + 0.1), (*col, 1 - k))
+                col = (0.5, 1.0, 0.5)
+                r.draw_transparent(m.ring, model_matrix(x, 0.06, z, scale=0.9 * (1 - k) + 0.15), (*col, 1 - k),
+                                   additive=True)
+                r.draw_transparent(m.disc, model_matrix(x, 0.055, z, scale=0.35 * (1 - k) + 0.05),
+                                   (*col, 0.6 * (1 - k)), additive=True)
+        if self.move_dest:
+            x, z = self.move_dest
+            pulse = 0.5 + 0.2 * math.sin(t * 6)
+            r.draw_transparent(m.ring, model_matrix(x, 0.06, z, scale=0.32), (0.5, 1.0, 0.5, pulse), additive=True)
+            r.draw_transparent(m.disc, model_matrix(x, 0.055, z, scale=0.08), (0.6, 1.0, 0.6, 0.9), additive=True)
 
         self.draw_indicators()
 
@@ -809,7 +863,7 @@ class GameScene(Scene):
         pygame.draw.arc(surf, (180, 120, 255), (306, 618, 64, 64), -math.pi / 2, -math.pi / 2 + math.tau * xp_ratio, 3)
 
         # 스킬
-        mouse = pygame.mouse.get_pos()
+        mouse = ui.mouse_pos()
         tooltip = None
         for slot in SLOTS:
             x = ABILITY_X[slot]
@@ -958,6 +1012,17 @@ class GameScene(Scene):
             p = self.world_to_minimap(e.x, e.z)
             pygame.draw.circle(surf, ui.TEAM_UI[info["tm"]], p, 5)
             pygame.draw.circle(surf, (255, 230, 100) if cid == self.my_id else (20, 20, 30), p, 5, 2 if cid == self.my_id else 1)
+        # 내 이동 경로
+        me = self.champs.get(self.my_id)
+        if self.move_dest and me:
+            a = self.world_to_minimap(me.x, me.z)
+            b = self.world_to_minimap(*self.move_dest)
+            pygame.draw.line(surf, (140, 255, 140), a, b, 1)
+            pygame.draw.circle(surf, (140, 255, 140), b, 3)
+        if self.click_marker and time.time() - self.click_marker[2] < 0.45:
+            k = (time.time() - self.click_marker[2]) / 0.45
+            p = self.world_to_minimap(self.click_marker[0], self.click_marker[1])
+            pygame.draw.circle(surf, (140, 255, 140), p, int(9 - 6 * k), 1)
         cam = self.app.renderer.camera
         a = self.world_to_minimap(cam.tx - 14, cam.tz - 8)
         b = self.world_to_minimap(cam.tx + 14, cam.tz + 8)
@@ -978,7 +1043,7 @@ class GameScene(Scene):
         if me:
             ui.text(surf, f"{me['g']} G", (p.right - 20, p.y + 16), 22, ui.GOLD, anchor="topright", bold=True)
         self.shop_rects = []
-        mouse = pygame.mouse.get_pos()
+        mouse = ui.mouse_pos()
         cols = 3
         cw = (p.width - 40) // cols
         for i, (iid, it) in enumerate(gamedata.items().items()):

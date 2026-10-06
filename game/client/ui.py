@@ -26,6 +26,21 @@ TEAM_UI = {0: BLUE_C, 1: RED_C}
 
 _fonts = {}
 _text_cache = {}
+_mouse_mapper = None
+
+
+def set_mouse_mapper(fn):
+    """창 좌표 -> 논리 화면 좌표 변환 함수 (전체 화면 확대 대응)."""
+    global _mouse_mapper
+    _mouse_mapper = fn
+
+
+def mouse_pos():
+    pos = pygame.mouse.get_pos()
+    if _mouse_mapper:
+        x, y = _mouse_mapper(pos)
+        return int(x), int(y)
+    return pos
 
 
 def _font_path(bold):
@@ -132,7 +147,7 @@ class Button:
     def draw(self, surface):
         if not self.visible:
             return
-        hover = self.rect.collidepoint(pygame.mouse.get_pos())
+        hover = self.rect.collidepoint(mouse_pos())
         if not self.enabled:
             col = (45, 50, 62)
         elif hover:

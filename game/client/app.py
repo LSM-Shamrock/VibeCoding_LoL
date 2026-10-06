@@ -13,9 +13,13 @@ from .gl import Renderer, model_matrix
 from .models import ModelLibrary
 
 WIDTH, HEIGHT = 1280, 720
+MOUSE_EVENTS = (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION)
 
 
 class Scene:
+    fullscreen = False      # True 인 장면(인게임)에 들어가면 전체 화면으로 전환
+    grab_mouse = False      # True 면 커서를 창 안에 가둔다 (화면 끝 카메라 이동용)
+
     def __init__(self, app):
         self.app = app
 
@@ -40,6 +44,8 @@ class Scene:
 
 class App:
     def __init__(self, autotest=None):
+        # 전체 화면에서 다른 창으로 전환해도 최소화되지 않게
+        os.environ.setdefault("SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS", "0")
         pygame.init()
         pygame.display.set_caption("칼바람 아레나")
         pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MAJOR_VERSION, 3)
@@ -55,7 +61,14 @@ class App:
             self.screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.OPENGL | pygame.DOUBLEBUF)
         self.ctx = moderngl.create_context()
         self.renderer = Renderer(self.ctx, WIDTH, HEIGHT)
+        ui.set_mouse_mapper(self.renderer.to_logical)
         self.models = ModelLibrary(self.renderer)
+        self.fullscreen = False
+        try:
+            from pygame._sdl2.video import Window
+            self.window = Window.from_display_module()
+        except Exception:  # noqa: BLE001
+            self.window = None
         self.clock = pygame.time.Clock()
         self.net = NetClient()
         self.server = None          # 이 프로세스에서 띄운 서버
@@ -76,7 +89,50 @@ class App:
     # ------------------------------------------------------------------ 장면
     def set_scene(self, scene):
         self.scene = scene
+        self.set_fullscreen(scene.fullscreen)
+        pygame.event.set_grab(scene.grab_mouse)
         scene.on_enter()
+
+    # ------------------------------------------------------------------ 창 모드
+    def set_fullscreen(self, on):
+        """테두리 없는 전체 화면(바탕화면 해상도) <-> 1280x720 창 모드. GL 컨텍스트는 유지된다."""
+        if on == self.fullscreen or self.window is None:
+            return
+        try:
+            if on:
+                self.window.set_fullscreen(desktop=True)
+            else:
+                from pygame._sdl2.video import WINDOWPOS_CENTERED
+                self.window.set_windowed()
+                self.window.size = (WIDTH, HEIGHT)
+                self.window.position = WINDOWPOS_CENTERED
+        except pygame.error as e:
+            print("[화면] 전환 실패:", e)
+            return
+        self.fullscreen = on
+        self.sync_window_size()
+
+    def sync_window_size(self):
+        w, h = pygame.display.get_window_size()
+        self.renderer.set_window_size(w, h)
+
+    def mouse_edge(self):
+        """커서가 실제 창(화면) 끝에 닿아 있으면 그 방향 (-1/0/1, -1/0/1)."""
+        if not pygame.mouse.get_focused():
+            return 0, 0
+        mx, my = pygame.mouse.get_pos()
+        w, h = self.renderer.window_size
+        m = 3
+        dx = -1 if mx <= m else (1 if mx >= w - 1 - m else 0)
+        dy = -1 if my <= m else (1 if my >= h - 1 - m else 0)
+        return dx, dy
+
+    def _to_logical_event(self, e):
+        if e.type in MOUSE_EVENTS and self.renderer.viewport != (0, 0, WIDTH, HEIGHT):
+            d = dict(e.dict)
+            d["pos"] = tuple(int(v) for v in self.renderer.to_logical(e.pos))
+            return pygame.event.Event(e.type, d)
+        return e
 
     def toast(self, text, dur=3.5):
         self.toasts.append((time.time() + dur, text))
@@ -168,11 +224,17 @@ class App:
         while self.running:
             dt = min(0.05, self.clock.tick(120) / 1000.0)
             self.time += dt
+            self.renderer.time = self.time
             for e in pygame.event.get():
                 if e.type == pygame.QUIT:
                     self.running = False
+                elif e.type in (pygame.WINDOWSIZECHANGED, pygame.WINDOWRESTORED):
+                    self.sync_window_size()
+                elif (e.type == pygame.KEYDOWN and e.key in (pygame.K_RETURN, pygame.K_KP_ENTER)
+                      and e.mod & pygame.KMOD_ALT):
+                    self.set_fullscreen(not self.fullscreen)      # Alt+Enter: 전체 화면 전환
                 else:
-                    self.scene.handle_event(e)
+                    self.scene.handle_event(self._to_logical_event(e))
             self.process_messages()
             if self.autotest:
                 self.autotest.step(self, dt)
@@ -181,7 +243,7 @@ class App:
             surf = self.renderer.overlay.begin()
             self.scene.draw_ui(surf)
             self.draw_toasts(surf)
-            self.renderer.overlay.end()
+            self.renderer.end_overlay()
             if self.autotest:
                 self.autotest.after_frame(self)
             pygame.display.flip()
@@ -203,7 +265,8 @@ class App:
             y += 38
 
     def screenshot(self, path):
-        data = self.ctx.screen.read(components=3)
-        img = pygame.image.frombytes(data, (WIDTH, HEIGHT), "RGB", True)
+        size = self.renderer.window_size
+        data = self.ctx.screen.read(viewport=(0, 0, *size), components=3)
+        img = pygame.image.frombytes(data, size, "RGB", True)
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         pygame.image.save(img, path)
