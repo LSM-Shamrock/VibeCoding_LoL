@@ -93,7 +93,7 @@ class SelectScene(Scene):
             rect = pygame.Rect(40, y, 268, 70)
             sel = me and me["champ"] == cid
             col = tuple(ch.get("color", (200, 200, 200)))
-            ui.panel(surf, rect, (40, 60, 95, 240) if sel else (24, 34, 54, 230), col if sel else (60, 80, 110))
+            ui.panel(surf, rect, (40, 60, 95, 240) if sel else (24, 34, 54, 230), ui.HIGHLIGHT if sel else ui.BORDER)
             pygame.draw.rect(surf, col, (rect.x + 10, rect.y + 10, 50, 50), border_radius=25)
             ui.text(surf, ch["name"][0], (rect.x + 35, rect.y + 35), 24, (20, 30, 50), anchor="center", bold=True,
                     shadow=False)
@@ -101,8 +101,6 @@ class SelectScene(Scene):
             ui.text(surf, f"{ch['title']} · {ch.get('role', '')}", (rect.x + 72, rect.y + 40), 14, ui.TEXT_DIM)
             self.card_rects.append((cid, rect))
             y += 78
-        ui.text(surf, "챔피언은 data/champions/*.json 을", (44, 480), 13, ui.TEXT_DIM)
-        ui.text(surf, "추가하면 목록에 나타납니다.", (44, 498), 13, ui.TEXT_DIM)
 
         # 팀 목록
         ui.panel(surf, (WIDTH - 324, 24, 300, 520))

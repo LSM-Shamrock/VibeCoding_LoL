@@ -10,6 +10,7 @@ import pygame
 from ..shared.constants import DEFAULT_PORT
 from ..shared.net import NetClient
 from . import ui
+from .keybinds import KeyBinds
 from .gl import Renderer, model_matrix
 from .models import ModelLibrary
 
@@ -86,6 +87,7 @@ class App:
         # 입력기로 넘어가므로 꺼 두고, 입력칸에 포커스가 있을 때만 켠다 (ui.TextInput).
         pygame.key.stop_text_input()
         self.clock = pygame.time.Clock()
+        self.keybinds = KeyBinds.load()   # 조작키 (게임 중 ESC 설정 창에서 변경)
         self.net = NetClient()
         self.server = None          # 이 프로세스에서 띄운 서버
         self.my_key = None

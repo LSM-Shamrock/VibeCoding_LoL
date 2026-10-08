@@ -13,7 +13,6 @@ from ..shared.constants import BLUE, DEFAULT_PORT, MAX_TEAM_SIZE, RED, SELECT_TI
 from ..shared.net import Connection, encode
 from .sim import Simulation
 
-BOT_NAMES = ["눈송이", "고드름", "서리꽃", "얼음꽃", "북풍", "설원", "빙하", "눈보라", "한파", "동장군"]
 RETURN_TO_ROOM_DELAY = 8.0
 
 
@@ -206,9 +205,7 @@ class GameServer:
                 return
             if len(room.team_members(team)) >= room.team_size:
                 return self.error(client, "팀 자리가 없습니다.")
-            used = {m.name for m in room.members}
-            name = next((n for n in BOT_NAMES if f"봇 {n}" not in used), "봇")
-            room.members.append(Member(f"b{next(self._ids)}", f"봇 {name}", team, bot=True))
+            room.members.append(Member(f"b{next(self._ids)}", "봇", team, bot=True))
             self.broadcast_room(room)
         elif t == "remove_bot":
             if client.key != room.host_key or room.phase != "waiting":

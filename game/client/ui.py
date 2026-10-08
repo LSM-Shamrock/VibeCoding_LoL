@@ -15,7 +15,8 @@ BOLD_CANDIDATES = [r"C:\Windows\Fonts\malgunbd.ttf"]
 BG = (12, 18, 32)
 PANEL = (18, 28, 48, 225)
 PANEL_LIGHT = (30, 46, 74, 235)
-BORDER = (90, 140, 200)
+BORDER = (0, 0, 0)
+HIGHLIGHT = (235, 240, 250)      # 선택/포커스 테두리
 GOLD = (230, 200, 120)
 TEXT = (225, 235, 250)
 TEXT_DIM = (140, 160, 190)
@@ -107,6 +108,25 @@ def text_block(surface, s, pos, width, size=14, color=TEXT, line_gap=4):
     return y
 
 
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_icons = {}
+
+
+def icon(path, size):
+    """프로젝트 기준 경로의 이미지를 size x size 로 읽어 둔다. 파일이 없으면 None."""
+    key = (path, size)
+    if key not in _icons:
+        full = os.path.join(_ROOT, path)
+        img = None
+        if os.path.exists(full):
+            try:
+                img = pygame.transform.smoothscale(pygame.image.load(full).convert_alpha(), (size, size))
+            except (pygame.error, ValueError):
+                img = None
+        _icons[key] = img
+    return _icons[key]
+
+
 def panel(surface, rect, color=PANEL, border=BORDER, radius=8, width=1):
     rect = pygame.Rect(rect)
     pygame.draw.rect(surface, color, rect, border_radius=radius)
@@ -155,7 +175,7 @@ class Button:
         else:
             col = self.color
         pygame.draw.rect(surface, col, self.rect, border_radius=6)
-        pygame.draw.rect(surface, (150, 190, 240) if self.enabled else (80, 85, 95), self.rect, 1, border_radius=6)
+        pygame.draw.rect(surface, BORDER, self.rect, 1, border_radius=6)
         text(surface, self.label, self.rect.center, self.size, TEXT if self.enabled else TEXT_DIM, anchor="center")
 
 
@@ -199,7 +219,7 @@ class TextInput:
 
     def draw(self, surface):
         pygame.draw.rect(surface, (10, 16, 28, 240), self.rect, border_radius=5)
-        pygame.draw.rect(surface, (120, 180, 255) if self.focused else (70, 100, 140), self.rect, 1, border_radius=5)
+        pygame.draw.rect(surface, HIGHLIGHT if self.focused else BORDER, self.rect, 1, border_radius=5)
         shown = self.value + self.composing
         y = self.rect.centery
         if shown:

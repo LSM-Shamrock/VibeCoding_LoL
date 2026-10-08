@@ -115,31 +115,26 @@ class RoomScene(Scene):
                 if i < len(members):
                     m = members[i]
                     me = m["key"] == self.app.my_key
-                    ui.panel(surf, rect, (30, 44, 70, 230), col if me else (70, 90, 120))
+                    ui.panel(surf, rect, (30, 44, 70, 230), ui.HIGHLIGHT if me else ui.BORDER)
                     pygame.draw.rect(surf, col, (x, y, 6, SLOT_H), border_radius=3)
                     label = m["name"] + ("  (나)" if me else "")
                     ui.text(surf, label, (x + 22, y + SLOT_H // 2), 19, anchor="midleft")
                     tags = []
                     if m["key"] == room["host"]:
                         tags.append("방장")
-                    if m["bot"]:
-                        tags.append("봇")
                     if tags:
                         ui.text(surf, " · ".join(tags), (x + COL_W - (100 if m["bot"] else 20), y + SLOT_H // 2), 15,
                                 ui.GOLD, anchor="midright")
                 else:
-                    ui.panel(surf, rect, (16, 22, 36, 180), (45, 60, 85))
+                    ui.panel(surf, rect, (16, 22, 36, 180), ui.BORDER)
                     ui.text(surf, "빈 자리", (x + COL_W // 2, y + SLOT_H // 2), 16, ui.TEXT_DIM, anchor="center")
         for b in self.slot_buttons:
             b.draw(surf)
 
         if self.is_host():
             self.btn_start.draw(surf)
-            if not self.btn_start.enabled:
-                ui.text(surf, "양 팀에 최소 1명(봇 포함)이 있어야 시작할 수 있습니다.", (WIDTH // 2, 668), 14,
-                        ui.TEXT_DIM, anchor="center")
         else:
-            ui.text(surf, "방장이 게임을 시작하기를 기다리는 중...", (WIDTH // 2, 625), 18, ui.TEXT_DIM, anchor="center")
+            ui.text(surf, "방장 대기 중", (WIDTH // 2, 625), 18, ui.TEXT_DIM, anchor="center")
         self.btn_leave.draw(surf)
 
         # 채팅 (최근 몇 줄)
