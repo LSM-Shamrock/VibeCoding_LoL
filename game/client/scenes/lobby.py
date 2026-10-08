@@ -73,7 +73,7 @@ class LobbyScene(Scene):
         shade.fill((8, 12, 24, 150))
         surf.blit(shade, (0, 0))
         ui.text(surf, "로비", (90, 50), 36, bold=True)
-        ui.text(surf, f"{self.app.my_name} · 서버 {self.app.server_addr}", (90, 100), 16, ui.TEXT_DIM)
+        ui.text(surf, f"{self.app.my_name} · 접속 주소 {self.app.share_addr}", (90, 100), 16, ui.TEXT_DIM)
 
         # 방 목록
         ui.panel(surf, (70, 140, 680, 460))

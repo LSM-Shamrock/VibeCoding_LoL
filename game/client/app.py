@@ -1,6 +1,7 @@
 """클라이언트 앱: pygame 창 + moderngl, 장면 관리, 서버 메시지 라우팅."""
 import math
 import os
+import socket
 import time
 
 import moderngl
@@ -14,6 +15,18 @@ from .models import ModelLibrary
 
 WIDTH, HEIGHT = 1280, 720
 MOUSE_EVENTS = (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION)
+LOOPBACK = ("127.0.0.1", "localhost", "::1")
+
+
+def local_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except OSError:
+        return "127.0.0.1"
 
 
 class Scene:
@@ -69,12 +82,16 @@ class App:
             self.window = Window.from_display_module()
         except Exception:  # noqa: BLE001
             self.window = None
+        # SDL 은 기본으로 텍스트 입력(IME)을 켜 둔다. 켜져 있으면 한글 입력 모드에서 게임 키가
+        # 입력기로 넘어가므로 꺼 두고, 입력칸에 포커스가 있을 때만 켠다 (ui.TextInput).
+        pygame.key.stop_text_input()
         self.clock = pygame.time.Clock()
         self.net = NetClient()
         self.server = None          # 이 프로세스에서 띄운 서버
         self.my_key = None
         self.my_name = ""
         self.server_addr = ""
+        self.share_addr = ""        # 다른 사람이 접속할 때 쓸 주소 (루프백이면 이 PC의 LAN IP)
         self.rooms = []
         self.room = None
         self.toasts = []            # (만료 시각, 텍스트)
@@ -157,6 +174,7 @@ class App:
             self.toast(f"접속 실패: {host}:{port} ({e.strerror or e})")
             return False
         self.server_addr = f"{host}:{port}"
+        self.share_addr = f"{local_ip() if host in LOOPBACK else host}:{port}"
         self.my_name = name
         self.net.send({"t": "hello", "name": name})
         return True

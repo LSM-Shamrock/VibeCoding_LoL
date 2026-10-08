@@ -95,6 +95,10 @@ class RoomScene(Scene):
         if not room:
             return
         ui.text(surf, room["name"], (WIDTH // 2, 50), 32, anchor="center", bold=True)
+        # 대기 중에도 친구에게 알려줄 수 있게 접속 주소를 항상 표시
+        ui.panel(surf, (WIDTH - 300, 24, 276, 64))
+        ui.text(surf, "접속 주소", (WIDTH - 284, 34), 14, ui.TEXT_DIM)
+        ui.text(surf, self.app.share_addr, (WIDTH - 284, 54), 20, ui.GOLD, bold=True)
         ui.text(surf, f"{room['size']} vs {room['size']}", (WIDTH // 2, 115), 24, anchor="center", bold=True)
         if self.is_host():
             self.btn_minus.draw(surf)

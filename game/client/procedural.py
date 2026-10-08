@@ -98,14 +98,11 @@ def build_minion(mtype, team):
         b.sphere((0, 0.95, 0), 0.17, metal, seg=10, rings=6)
         b.box((0, 0.95, 0.15), (0.24, 0.05, 0.04), (0.1, 0.1, 0.12))
         b.cone((0, 1.08, 0), 0.08, 0.16, tc, seg=6)
-        b.box((0.32, 0.62, 0.22), (0.06, 0.06, 0.6), metal)
         b.box((-0.3, 0.6, 0.12), (0.06, 0.4, 0.3), tc)
     elif mtype == "caster":
         b.cylinder((0, 0, 0), 0.3, 0.75, tc, seg=10, radius_top=0.16)
         b.sphere((0, 0.88, 0), 0.15, (0.85, 0.8, 0.75), seg=10, rings=6)
         b.cone((0, 0.96, 0), 0.22, 0.4, _mix(tc, (0.1, 0.1, 0.2), 0.4), seg=10)
-        b.box((0.3, 0.55, 0.08), (0.05, 1.0, 0.05), (0.45, 0.32, 0.2))
-        b.sphere((0.3, 1.08, 0.08), 0.09, _mix(tc, (1, 1, 1), 0.5), seg=8, rings=5)
     elif mtype == "cannon":
         b.box((0, 0.42, 0), (0.85, 0.42, 1.0), dark)
         b.box((0, 0.66, 0), (0.7, 0.1, 0.85), tc)
@@ -124,6 +121,24 @@ def build_minion(mtype, team):
         b.box((0, 1.74, 0.22), (0.3, 0.06, 0.05), (1.0, 0.85, 0.3))
         b.box((0.62, 1.0, 0.45), (0.12, 0.12, 0.9), metal)
     return b
+
+
+# 무기를 따로 만드는 미니언: 몸통과 분리해 공격할 때 휘두른다.
+# 반환: (builder, 손 위치) — builder 의 원점이 손(회전축)이다.
+MINION_WEAPON_PIVOT = {"melee": (0.32, 0.62, -0.05), "caster": (0.3, 0.55, 0.08)}
+
+
+def build_minion_weapon(mtype, team):
+    tc = TEAM_COLORS[team]
+    b = MeshBuilder()
+    if mtype == "melee":
+        b.box((0, 0, 0.27), (0.06, 0.06, 0.6), (0.62, 0.66, 0.74))      # 앞으로 뻗은 검
+    elif mtype == "caster":
+        b.box((0, 0, 0), (0.05, 1.0, 0.05), (0.45, 0.32, 0.2))          # 지팡이
+        b.sphere((0, 0.53, 0), 0.09, _mix(tc, (1, 1, 1), 0.5), seg=8, rings=5)
+    else:
+        return None
+    return b, MINION_WEAPON_PIVOT[mtype]
 
 
 # ------------------------------------------------------------------ 구조물

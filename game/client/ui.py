@@ -175,6 +175,8 @@ class TextInput:
             if self.focused and not was:
                 pygame.key.start_text_input()
                 pygame.key.set_text_input_rect(self.rect)
+            elif was and not self.focused:
+                pygame.key.stop_text_input()
             return self.focused
         if not self.focused:
             return False
@@ -191,6 +193,7 @@ class TextInput:
                 return True
             if e.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_TAB):
                 self.focused = False
+                pygame.key.stop_text_input()
                 return True
         return False
 

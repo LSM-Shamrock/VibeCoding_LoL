@@ -210,6 +210,7 @@ class ModelLibrary:
         self.r = renderer
         self.cache = {}
         self.messages = []          # 로딩 결과 (화면 표시/디버그용)
+        self.from_file = set()      # 모델 파일로 불러온 월드 모델 키
         self._build_defaults()
 
     def _mesh(self, builder):
@@ -247,12 +248,25 @@ class ModelLibrary:
                 "nexus": self._world_or_default("nexus", lambda t=team: P.build_nexus(t)),
                 "nexus_dead": self._mesh(P.build_nexus(team, alive=False)),
             }
+        # 기본 도형 미니언의 무기 (모델 파일을 쓰는 미니언은 무기가 모델에 포함돼 있으므로 없음)
+        self.minion_weapons = {}
+        for team in (0, 1):
+            weapons = {}
+            for mtype in ("melee", "caster", "cannon", "super"):
+                key = f"minion_{mtype}"
+                if key in self.from_file:
+                    continue
+                built = P.build_minion_weapon(mtype, team)
+                if built:
+                    weapons[key] = (self._mesh(built[0]), built[1])
+            self.minion_weapons[team] = weapons
 
     def _world_or_default(self, key, builder_fn):
         cfg = gamedata.world_models().get(key)
         if cfg and cfg.get("file"):
             mesh = self.load_file(cfg["file"], cfg)
             if mesh is not None:
+                self.from_file.add(key)
                 return mesh
         return self._mesh(builder_fn())
 

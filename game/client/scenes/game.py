@@ -16,7 +16,7 @@ import pygame
 
 from ...shared import data as gamedata
 from ...shared import mapdata
-from ...shared.constants import BLUE, INVENTORY_SLOTS, RED, SELL_RATIO
+from ...shared.constants import BLUE, FLASH_RANGE, INVENTORY_SLOTS, MARK_RANGE, RED, SELL_RATIO
 from .. import ui
 from ..app import HEIGHT, WIDTH, Scene
 from ..geometry import MeshBuilder
@@ -32,12 +32,37 @@ STAT_LABELS = [("ad", "공격력", 1), ("ap", "주문력", 1), ("hp", "체력", 
                ("move_speed", "이동 속도", 100), ("ability_haste", "스킬 가속", 1), ("crit", "치명타 %", 100),
                ("life_steal", "생명력 흡수 %", 100), ("hp_regen", "체력 재생", 1)]
 SLOTS = ("Q", "W", "E", "R")
-KEYMAP = {pygame.K_q: "Q", pygame.K_w: "W", pygame.K_e: "E", pygame.K_r: "R"}
+# 마우스 아래 유닛 판정 반경 (줌 22 기준 화면 픽셀). 모델보다 넉넉하게 잡아 평타 클릭이 쉽게
+HOVER_RADIUS = {"champion": 58, "minion": 38}
 
 HUD_RECT = pygame.Rect(300, 606, 680, 108)
 MINIMAP = pygame.Rect(1000, 606, 270, 108)
 ABILITY_X = {"Q": 392, "W": 454, "E": 516, "R": 578}
 SPELL_X = {"D": 652, "F": 702}
+
+
+def key_letter(e):
+    """키 이벤트의 물리 키 위치로 알파벳을 얻는다.
+
+    한글 입력기(IME)가 켜져 있거나 자판 배열이 달라도 e.key 대신 scancode 를 쓰면
+    Q/W/E/R/D/F 가 항상 같은 키로 인식된다.
+    """
+    sc = getattr(e, "scancode", 0)
+    if pygame.KSCAN_A <= sc <= pygame.KSCAN_Z:
+        return chr(ord("A") + sc - pygame.KSCAN_A)
+    if pygame.K_a <= e.key <= pygame.K_z:
+        return chr(e.key).upper()
+    return None
+
+
+def _seg_dist(px, py, a, b):
+    """점 (px, py) 와 화면 선분 a-b 사이의 거리."""
+    ax, ay = a
+    bx, by = b
+    vx, vy = bx - ax, by - ay
+    ll = vx * vx + vy * vy
+    k = 0.0 if ll == 0 else max(0.0, min(1.0, ((px - ax) * vx + (py - ay) * vy) / ll))
+    return math.hypot(px - (ax + vx * k), py - (ay + vy * k))
 
 
 def item_stat_text(item):
@@ -58,6 +83,7 @@ class CEnt:
         self.z = self.tz = z
         self.f = self.tf = f
         self.d = None
+        self.swing_t = -10.0        # 마지막 공격 휘두르기 시작 시각 (미니언 무기 모션)
 
     def set_target(self, x, z, f):
         if math.hypot(x - self.x, z - self.z) > 6.0:      # 순간이동(점멸, 부활 등)
@@ -106,6 +132,7 @@ class GameScene(Scene):
         self.rmb_down = False
         self.rmb_repeat = 0.0
         self.hover = None
+        self.hover_slot = None
         self.click_marker = None
         self.move_dest = None       # 이동 목적지 (도착할 때까지 바닥에 표시)
         self.minimap_drag = False   # 미니맵을 좌클릭한 채로 끌면 카메라 이동
@@ -130,6 +157,10 @@ class GameScene(Scene):
         cam.pitch = math.radians(56)
         cam.yaw = 0.0
         cam.distance = self.zoom
+
+    def on_enter(self):
+        # 텍스트 입력(IME)이 켜져 있으면 한글 모드에서 스킬 키가 입력기로 빠져 나가므로 끈다
+        pygame.key.stop_text_input()
 
     # ------------------------------------------------------------------ 도우미
     @property
@@ -187,6 +218,8 @@ class GameScene(Scene):
             e = self.minions.get(mid)
             if e is None:
                 e = self.minions[mid] = CEnt(mid, row[3], row[4], row[5])
+            if row[8] == 2 and (e.d is None or e.d[8] != 2) and now - e.swing_t > 0.3:
+                e.swing_t = now
             e.set_target(row[3], row[4], row[5])
             e.d = row
             seen.add(mid)
@@ -298,25 +331,38 @@ class GameScene(Scene):
         """마우스 아래에 있는 유닛 (kind, id)."""
         cam = self.app.renderer.camera
         mx, my = self.mouse_pos()
+        zoom_k = 22.0 / max(1.0, cam.distance)
         best, best_d = None, 1e9
         cands = []
         for eid, e in self.champs.items():
             if e.d and not e.d["dead"]:
-                cands.append(("champion", eid, e.x, e.z, 1.0, 36))
+                cands.append(("champion", eid, e.x, e.z, 2.0, HOVER_RADIUS["champion"]))
         for eid, e in self.minions.items():
-            cands.append(("minion", eid, e.x, e.z, 0.5, 24))
+            cands.append(("minion", eid, e.x, e.z, MINION_HEIGHT[e.d[1]], HOVER_RADIUS["minion"]))
         for eid, s in self.structs.items():
             if self.struct_state[eid][2]:
-                h = 2.0 if s["k"] == "turret" else 1.2
+                h = 4.0 if s["k"] == "turret" else 2.0
                 cands.append(("structure", eid, s["x"], s["z"], h, 60 if s["k"] != "turret" else 50))
         for kind, eid, x, z, h, rad in cands:
-            p = cam.world_to_screen(x, h, z)
-            if p is None:
+            # 발밑~머리 위 세로 선분과의 거리로 판정해, 모델 어디를 눌러도 / 조금 빗나가도 잡히게
+            a = cam.world_to_screen(x, 0.0, z)
+            b = cam.world_to_screen(x, h, z)
+            if a is None or b is None:
                 continue
-            d = math.hypot(p[0] - mx, p[1] - my)
-            if d < rad and d < best_d:
+            d = _seg_dist(mx, my, a, b) / (rad * zoom_k)   # 판정 반경 대비 거리 (작을수록 가까움)
+            if d < 1.0 and d < best_d:
                 best, best_d = (kind, eid), d
         return best
+
+    def slot_rects(self):
+        rects = [(slot, pygame.Rect(ABILITY_X[slot], 614, 54, 54)) for slot in SLOTS]
+        rects += [(slot, pygame.Rect(SPELL_X[slot], 619, 44, 44)) for slot in ("D", "F")]
+        return rects
+
+    def find_hover_slot(self):
+        """마우스가 올라가 있는 스킬/주문 아이콘 (롤처럼 범위 미리보기용)."""
+        mouse = self.mouse_pos()
+        return next((slot for slot, rect in self.slot_rects() if rect.collidepoint(mouse)), None)
 
     def right_click(self, repeat=False):
         if self.my_id is None or not self.me or self.me["dead"]:
@@ -347,8 +393,9 @@ class GameScene(Scene):
     def handle_event(self, e):
         if e.type == pygame.KEYDOWN:
             mods = pygame.key.get_mods()
-            if e.key in KEYMAP:
-                slot = KEYMAP[e.key]
+            letter = key_letter(e)
+            if letter in SLOTS:
+                slot = letter
                 if mods & pygame.KMOD_CTRL:
                     self.send_cmd(c="level", slot=slot)
                     return
@@ -358,22 +405,19 @@ class GameScene(Scene):
                 else:
                     self.aiming = slot
                 return
-            if e.key == pygame.K_d:
+            if letter in ("D", "F"):
                 x, z = self.mouse_ground()
-                self.send_cmd(c="spell", slot="D", x=round(x, 2), z=round(z, 2))
-            elif e.key == pygame.K_f:
-                x, z = self.mouse_ground()
-                self.send_cmd(c="spell", slot="F", x=round(x, 2), z=round(z, 2))
-            elif e.key == pygame.K_s:
+                self.send_cmd(c="spell", slot=letter, x=round(x, 2), z=round(z, 2))
+            elif letter == "S":
                 self.send_cmd(c="stop")
                 self.move_dest = None
-            elif e.key == pygame.K_a:
+            elif letter == "A":
                 self.amove_pending = True
-            elif e.key in (pygame.K_b, pygame.K_p):
+            elif letter in ("B", "P"):
                 self.shop_open = not self.shop_open
             elif e.key == pygame.K_TAB:
                 self.show_score = True
-            elif e.key == pygame.K_y:
+            elif letter == "Y":
                 self.cam_locked = not self.cam_locked
             elif e.key == pygame.K_ESCAPE:
                 self.shop_open = False
@@ -382,7 +426,7 @@ class GameScene(Scene):
         elif e.type == pygame.KEYUP:
             if e.key == pygame.K_TAB:
                 self.show_score = False
-            elif e.key in KEYMAP and self.aiming == KEYMAP[e.key]:
+            elif self.aiming and key_letter(e) == self.aiming:
                 self.cast_slot(self.aiming)
                 self.aiming = None
         elif e.type == pygame.MOUSEBUTTONDOWN:
@@ -466,6 +510,7 @@ class GameScene(Scene):
         for e in self.minions.values():
             e.step(dt)
         self.hover = self.find_hover()
+        self.hover_slot = self.find_hover_slot()
 
         if self.rmb_down:
             self.rmb_repeat -= dt
@@ -572,13 +617,19 @@ class GameScene(Scene):
             code, team, anim = row[1], row[2], row[8]
             key = MINION_KEYS[code]
             bob = abs(math.sin(t * 9 + mid)) * 0.08 if anim == 1 else 0.0
-            lunge = 0.15 if anim == 2 else 0.0
             rot = facing_to_rot(e.f)
-            ox, oz = math.cos(e.f) * lunge, math.sin(e.f) * lunge
             rad = MINION_RADIUS[code]
             r.draw_transparent(m.shadow, model_matrix(e.x, 0.03, e.z, scale=rad * 1.1), (0, 0, 0, 0.3))
             emis = (0.2, 0.2, 0.2) if mid == hov_id else (0, 0, 0)
-            r.draw(m.team_meshes[team][key], model_matrix(e.x + ox, bob, e.z + oz, rot_y=rot), emissive=emis)
+            r.draw(m.team_meshes[team][key], model_matrix(e.x, bob, e.z, rot_y=rot), emissive=emis)
+            weapon = m.minion_weapons[team].get(key)
+            if weapon:
+                # 무기는 손을 축으로 따로 그려, 공격할 때 뒤로 젖혔다가 앞으로 휘두른다
+                wmesh, (px, py, pz) = weapon
+                c, s_ = math.cos(rot), math.sin(rot)
+                wx, wz = c * px + s_ * pz, -s_ * px + c * pz
+                r.draw(wmesh, model_matrix(e.x + wx, bob + py, e.z + wz, rot_y=rot,
+                                           rot_x=self.swing_angle(now - e.swing_t)), emissive=emis)
 
         # 챔피언
         for cid, e in self.champs.items():
@@ -598,8 +649,6 @@ class GameScene(Scene):
             anim = d["a"]
             bob = abs(math.sin(t * 10 + cid)) * 0.06 if anim == 1 else 0.0
             tilt = 0.08 if anim == 1 else 0.0
-            lunge = 0.12 if anim in (2, 3) else 0.0
-            ox, oz = math.cos(e.f) * lunge, math.sin(e.f) * lunge
             tint = (1, 1, 1, 1)
             emis = [0.0, 0.0, 0.0]
             if "slow" in d["st"]:
@@ -608,7 +657,7 @@ class GameScene(Scene):
                 emis = [0.05, 0.12, 0.25]
             if cid == hov_id:
                 emis = [v + 0.15 for v in emis]
-            r.draw(mesh, model_matrix(e.x + ox, bob, e.z + oz, rot_y=facing_to_rot(e.f), rot_x=tilt), tint=tint,
+            r.draw(mesh, model_matrix(e.x, bob, e.z, rot_y=facing_to_rot(e.f), rot_x=tilt), tint=tint,
                    emissive=emis)
             if "stun" in d["st"]:
                 for k in range(3):
@@ -682,6 +731,19 @@ class GameScene(Scene):
 
         self.draw_indicators()
 
+    @staticmethod
+    def swing_angle(age, dur=0.45):
+        """미니언 무기 휘두르기 각도: 뒤로 젖혔다가(-) 앞으로 내려친 뒤(+) 제자리로."""
+        if age < 0 or age > dur:
+            return 0.0
+        k = age / dur
+        if k < 0.3:
+            return -0.7 * (k / 0.3)
+        if k < 0.55:
+            p = (k - 0.3) / 0.25
+            return -0.7 + 2.0 * (1 - (1 - p) ** 2)
+        return 1.3 * (1 - (k - 0.55) / 0.45)
+
     def draw_indicators(self):
         r = self.app.renderer
         m = self.app.models
@@ -694,23 +756,33 @@ class GameScene(Scene):
             if data:
                 rng = data["stats"]["attack_range"] + 0.55
             r.draw_transparent(m.ring_thin, model_matrix(me.x, 0.06, me.z, scale=rng), (1.0, 0.5, 0.4, 0.8))
-        if not self.aiming:
+        # 조준 중인 스킬, 아니면 마우스를 올린 스킬 아이콘의 범위와 조준 바를 보여준다 (롤과 같은 방식)
+        slot = self.aiming or self.hover_slot
+        if not slot:
             return
-        data = self.my_data()
-        ab = data["abilities"][self.aiming]
+        if slot == "D":
+            ab = {"type": "dash", "range": FLASH_RANGE, "width": 0.0}
+        elif slot == "F":
+            ab = {"type": "skillshot", "range": MARK_RANGE, "width": 0.7}
+        else:
+            ab = self.my_data()["abilities"][slot]
         mx, mz = self.mouse_ground()
         dx, dz = mx - me.x, mz - me.z
         dist = math.hypot(dx, dz) or 1.0
         ang = math.atan2(dx, dz)
         col = (0.55, 0.85, 1.0)
         if ab["type"] in ("skillshot", "dash"):
+            r.draw_transparent(m.ring_thin, model_matrix(me.x, 0.06, me.z, scale=ab["range"]), (*col, 0.45))
             length = ab["range"] if ab["type"] == "skillshot" else min(dist, ab["range"])
             width = ab.get("width", 0.9)
-            r.draw_transparent(self.quad, model_matrix(me.x, 0.07, me.z, rot_y=ang, sx=width, sy=1, sz=length),
-                               (*col, 0.35))
+            if width > 0:
+                r.draw_transparent(self.quad, model_matrix(me.x, 0.07, me.z, rot_y=ang, sx=width, sy=1, sz=length),
+                                   (*col, 0.35))
             if ab["type"] == "dash":
                 ex, ez = me.x + dx / dist * length, me.z + dz / dist * length
                 r.draw_transparent(m.ring, model_matrix(ex, 0.08, ez, scale=0.6), (*col, 0.9))
+        elif ab["type"] == "self_buff":
+            r.draw_transparent(m.ring, model_matrix(me.x, 0.07, me.z, scale=1.2), (*col, 0.8))
         elif ab["type"] == "ground_aoe":
             r.draw_transparent(m.ring_thin, model_matrix(me.x, 0.06, me.z, scale=ab["range"]), (*col, 0.6))
             k = min(1.0, ab["range"] / dist)
@@ -809,20 +881,30 @@ class GameScene(Scene):
                 ui.text(surf, f["text"], p, f["size"], f["color"], anchor="center", bold=True)
 
     def draw_top(self, surf):
-        r = pygame.Rect(0, 0, 300, 52)
-        r.midtop = (WIDTH // 2, 6)
-        ui.panel(surf, r, (14, 20, 34, 220), (70, 100, 140))
-        ui.text(surf, str(self.score[BLUE]), (r.centerx - 60, r.y + 18), 24, ui.BLUE_C, anchor="center", bold=True)
-        ui.text(surf, str(self.score[RED]), (r.centerx + 60, r.y + 18), 24, ui.RED_C, anchor="center", bold=True)
+        # 롤처럼 우측 상단: 팀 킬 (우리 vs 상대) | 내 K/D/A · CS | 경기 시간
+        r = pygame.Rect(WIDTH - 352, 6, 346, 32)
+        ui.panel(surf, r, (14, 20, 34, 225), (70, 100, 140), radius=4)
+        y = r.centery
+        ours, theirs = self.my_team, 1 - self.my_team
+        ui.text(surf, str(self.score[ours]), (r.x + 30, y), 18, ui.TEAM_UI[ours], anchor="center", bold=True)
+        ui.text(surf, "vs", (r.x + 55, y), 12, ui.TEXT_DIM, anchor="center")
+        ui.text(surf, str(self.score[theirs]), (r.x + 80, y), 18, ui.TEAM_UI[theirs], anchor="center", bold=True)
+        pygame.draw.line(surf, (60, 80, 110), (r.x + 106, r.y + 6), (r.x + 106, r.bottom - 6))
+        me = self.me
+        if me:
+            ui.text(surf, f"{me['k']}/{me['d']}/{me['as']}", (r.x + 158, y), 15, anchor="center", bold=True)
+            ui.text(surf, f"CS {me['cs']}", (r.x + 236, y), 14, ui.TEXT_DIM, anchor="center")
+        pygame.draw.line(surf, (60, 80, 110), (r.x + 276, r.y + 6), (r.x + 276, r.bottom - 6))
         mm, ss = divmod(int(self.server_time), 60)
-        ui.text(surf, f"{mm:02d}:{ss:02d}", (r.centerx, r.y + 18), 18, anchor="center")
-        ui.text(surf, f"다음 미니언 {math.ceil(self.wave_in)}초", (r.centerx, r.y + 40), 12, ui.TEXT_DIM, anchor="center")
+        ui.text(surf, f"{mm:02d}:{ss:02d}", (r.right - 35, y), 16, anchor="center", bold=True)
+        ui.text(surf, f"다음 미니언 {math.ceil(self.wave_in)}초", (r.right - 4, r.bottom + 4), 12, ui.TEXT_DIM,
+                anchor="topright")
         if not self.cam_locked:
-            ui.text(surf, "카메라 고정 해제됨 (Y)", (WIDTH // 2, 66), 13, ui.GOLD, anchor="center")
+            ui.text(surf, "카메라 고정 해제됨 (Y)", (WIDTH // 2, 16), 13, ui.GOLD, anchor="center")
 
     def draw_killfeed(self, surf):
         now = time.time()
-        y = 12
+        y = 66
         for t, ev in self.killfeed:
             if now - t > 8:
                 continue

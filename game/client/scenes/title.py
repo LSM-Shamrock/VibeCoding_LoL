@@ -1,23 +1,11 @@
 """타이틀: 닉네임 입력, 서버 열기(호스트) / 서버 접속."""
 import random
-import socket
 
 import pygame
 
 from ...shared.constants import DEFAULT_PORT
 from .. import ui
-from ..app import HEIGHT, WIDTH, Scene
-
-
-def local_ip():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except OSError:
-        return "127.0.0.1"
+from ..app import HEIGHT, WIDTH, Scene, local_ip
 
 
 class TitleScene(Scene):
