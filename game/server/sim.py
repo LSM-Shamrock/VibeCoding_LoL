@@ -1137,7 +1137,6 @@ class Simulation:
                   round(max(0.0, c.respawn_at - t)) if c.dead else 0] for c in self.champions.values()]
         structs = [[s.id, round(s.hp), int(s.alive), int(self.vulnerable(s)), s.target or 0]
                    for s in self.structures.values()]
-        relics = [[r.id, r.x, r.z, int(r.active)] for r in self.relics]
         out = {}
         for team in (BLUE, RED):
             obs = self._observers[team]
@@ -1149,6 +1148,8 @@ class Simulation:
                      for p in self.projectiles.values() if p.team == team or self.seen_by(obs, p.x, p.z)]
             effs = [[e.id, e.style, e.team, round(e.x, 2), round(e.z, 2), e.radius, round(e.trigger_at - t, 2)]
                     for e in self.effects.values() if e.team == team or self.seen_by(obs, e.x, e.z)]
+            # 회복 구슬은 시야 안에 있을 때만 있다고 알려준다
+            relics = [[r.id, r.x, r.z, int(r.active and self.seen_by(obs, r.x, r.z))] for r in self.relics]
             out[team] = {
                 "t": "snap", "time": round(t, 2), "score": [self.score[BLUE], self.score[RED]],
                 "ch": [row for cid, row in champs.items() if self.champions[cid].team == team or cid in vis],

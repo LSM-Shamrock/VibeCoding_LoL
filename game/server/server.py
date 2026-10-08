@@ -239,10 +239,12 @@ class GameServer:
             if room.phase == "ingame" and room.sim:
                 room.sim.handle_command(client.key, msg)
         elif t == "chat":
-            text = str(msg.get("text", ""))[:120]
+            text = str(msg.get("text", "")).strip()[:120]
             if text:
+                me = room.member(client.key)
+                out = {"t": "chat", "name": client.name, "text": text, "team": me.team if me else -1}
                 for m in room.humans():
-                    m.client.conn.send({"t": "chat", "name": client.name, "text": text})
+                    m.client.conn.send(out)
 
     # ------------------------------------------------------------------ 방 흐름
     def join(self, client, room):

@@ -9,6 +9,7 @@
 - B: 귀환 (8초 정신집중, 이동/공격/스킬/피해 시 취소), P: 상점 (사망 중이거나 우물 안에서만 구매), Tab: 점수판
 - 시야: 아군 주변만 보이고(전장의 안개), 부쉬 안의 적은 같은 부쉬에 들어가야 보인다
 - Y: 카메라 고정/해제, Space: 내 챔피언으로 카메라 이동, 마우스 휠: 줌
+- Enter: 채팅 (Enter 로 보내기, Esc 로 취소). 킬·포탑 파괴 같은 알림도 채팅창에 올라온다
 """
 import math
 import time
@@ -46,6 +47,8 @@ HOVER_RADIUS = {"champion": 58, "minion": 38}
 HUD_RECT = pygame.Rect(300, 606, 680, 108)
 MINIMAP_X = 70.0                        # 미니맵이 덮는 x 범위 (±)
 INV_COLS = 4                            # 인벤토리 4칸 x 2줄
+CHAT_X, CHAT_Y, CHAT_W = 12, 572, 400     # 채팅 입력칸 (왼쪽 아래, 로그는 그 위로 쌓임)
+CHAT_SHOW = 10.0                           # 채팅창이 닫혀 있을 때 새 줄이 보이는 시간 (초)
 SETTINGS_RECT = pygame.Rect(WIDTH // 2 - 260, 70, 520, 560)
 MOVE_COLOR = (0.35, 0.65, 1.0)          # 이동 지점 표시 색
 MOVE_COLOR_UI = (110, 175, 255)
@@ -201,6 +204,9 @@ class GameScene(Scene):
         self.hud_inv_rects = []     # HUD 인벤토리 칸 (상점이 열려 있으면 우클릭 판매)
         self.gold_rect = None       # 골드 글자 (클릭하면 상점 열기/닫기)
         self.hud_tooltip = None     # 상점·점수판 위에 그리도록 마지막에 그린다
+        self.chat_lines = []        # (시각, [(글자, 색), ...]) — 플레이어 채팅과 킬·파괴 알림
+        self.chat_open = False
+        self.chat_in = ui.TextInput((CHAT_X, CHAT_Y, CHAT_W, 26), "", 100, "Enter 로 보내기 · Esc 취소")
         self.zoom = 22.0
         self.fake_mouse = None      # 자동 테스트용
         self.binds = app.keybinds
@@ -314,6 +320,9 @@ class GameScene(Scene):
         t = msg.get("t")
         if t == "snap":
             self.apply_snapshot(msg)
+        elif t == "chat":
+            col = ui.TEAM_UI.get(msg.get("team"), ui.TEXT)
+            self.add_chat([(f"{msg['name']}: ", col), (msg["text"], ui.TEXT)])
         elif t == "game_over":
             self.winner = msg["winner"]
             self.over_at = time.time()
@@ -402,12 +411,15 @@ class GameScene(Scene):
         elif e == "kill":
             self.killfeed.append((now, ev))
             self.killfeed = self.killfeed[-6:]
+            self.add_chat([(ev["kn"], ui.TEAM_UI.get(ev["kt"], ui.TEXT)), (" 님이 ", ui.TEXT_DIM),
+                           (ev["vn"], ui.TEAM_UI.get(ev["vt"], ui.TEXT)), (" 님을 처치했습니다.", ui.TEXT_DIM)])
             if ev["v"] == self.my_id:
                 self.announces.append((now, "처치당했습니다!", ui.RED_C))
             elif ev["k"] == self.my_id:
                 self.announces.append((now, "적을 처치했습니다!", ui.GOLD))
         elif e == "announce":
             self.announces.append((now, ev["text"], ui.TEXT))
+            self.add_chat([(ev["text"], ui.GOLD)])
         elif e == "levelup":
             pos = self.entity_pos(ev["d"])
             if pos:
@@ -437,6 +449,47 @@ class GameScene(Scene):
             pos = self.entity_pos(ev["d"])
             if pos and ev.get("slot") == "W":
                 self.add_fx("ring_up", pos[0], pos[1], 0.6, radius=1.2, color=(0.6, 0.9, 1.0))
+
+    def add_chat(self, parts):
+        self.chat_lines.append((time.time(), parts))
+        self.chat_lines = self.chat_lines[-40:]
+
+    # ---- 채팅 입력
+    def open_chat(self):
+        self.chat_open = True
+        self.chat_in.value = ""
+        self.chat_in.composing = ""
+        self.chat_in.focused = True
+        self.aiming = None
+        self.amove_pending = False
+        self.held.clear()
+        pygame.key.start_text_input()       # 한글 입력
+        pygame.key.set_text_input_rect(self.chat_in.rect)
+
+    def close_chat(self, send=False):
+        text = self.chat_in.value.strip()
+        if send and text:
+            self.app.send({"t": "chat", "text": text})
+        self.chat_open = False
+        self.chat_in.focused = False
+        self.chat_in.composing = ""
+        pygame.key.stop_text_input()        # 다시 게임 키가 입력기로 새지 않게
+
+    def handle_chat_event(self, e):
+        """채팅 입력 중 키보드 이벤트. 처리했으면 True (게임 조작으로 넘기지 않음)."""
+        if e.type == pygame.KEYDOWN:
+            if e.key in (pygame.K_RETURN, pygame.K_KP_ENTER) and not self.chat_in.composing:
+                self.close_chat(send=True)
+                return True
+            if e.key == pygame.K_ESCAPE:
+                self.close_chat()
+                return True
+            self.chat_in.handle(e)
+            return True
+        if e.type in (pygame.KEYUP, pygame.TEXTINPUT, pygame.TEXTEDITING):
+            self.chat_in.handle(e)
+            return True
+        return False
 
     def entity_pos(self, eid):
         e = self.champs.get(eid) or self.minions.get(eid)
@@ -529,6 +582,11 @@ class GameScene(Scene):
     def handle_event(self, e):
         if self.settings_open:
             self.handle_settings_event(e)
+            return
+        if self.chat_open and self.handle_chat_event(e):
+            return
+        if e.type == pygame.KEYDOWN and e.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+            self.open_chat()
             return
         if e.type == pygame.KEYDOWN:
             if e.key == pygame.K_ESCAPE:
@@ -1049,6 +1107,7 @@ class GameScene(Scene):
         self.draw_announces(surf)
         self.draw_hud(surf)
         self.draw_minimap(surf)
+        self.draw_chat(surf)
         me = self.me
         if me and me["dead"] and self.winner is None:
             shade = pygame.Surface((WIDTH, 120), pygame.SRCALPHA)
@@ -1148,7 +1207,7 @@ class GameScene(Scene):
     def draw_top(self, surf):
         # 롤처럼 우측 상단: 팀 킬 (우리 vs 상대) | 내 K/D/A | 경기 시간
         r = pygame.Rect(WIDTH - 286, 6, 280, 32)
-        ui.panel(surf, r, (14, 20, 34, 225), None, radius=4)
+        ui.panel(surf, r, (14, 20, 34, 120), None, radius=4)
         y = r.centery
         ours, theirs = self.my_team, 1 - self.my_team
         ui.text(surf, str(self.score[ours]), (r.x + 30, y), 18, ui.TEAM_UI[ours], anchor="center", bold=True)
@@ -1164,7 +1223,7 @@ class GameScene(Scene):
 
     def draw_killfeed(self, surf):
         now = time.time()
-        y = 12
+        y = 48
         for t, ev in self.killfeed:
             if now - t > 8:
                 continue
@@ -1172,11 +1231,34 @@ class GameScene(Scene):
             vc = ui.TEAM_UI.get(ev["vt"], ui.TEXT)
             kw = ui.font(14).size(ev["kn"])[0]
             vw = ui.font(14).size(ev["vn"])[0]
-            ui.panel(surf, (12, y - 2, kw + vw + 64, 26), (14, 20, 34, 200), None, radius=4)
-            ui.text(surf, ev["kn"], (22, y + 11), 14, kc, anchor="midleft")
-            ui.text(surf, "▶", (22 + kw + 20, y + 11), 12, ui.TEXT_DIM, anchor="center")
-            ui.text(surf, ev["vn"], (22 + kw + 40, y + 11), 14, vc, anchor="midleft")
+            w = kw + vw + 64
+            x0 = WIDTH - 6 - w
+            ui.panel(surf, (x0, y - 2, w, 26), (14, 20, 34, 120), None, radius=4)
+            ui.text(surf, ev["kn"], (x0 + 10, y + 11), 14, kc, anchor="midleft")
+            ui.text(surf, "▶", (x0 + 10 + kw + 20, y + 11), 12, ui.TEXT_DIM, anchor="center")
+            ui.text(surf, ev["vn"], (x0 + 10 + kw + 40, y + 11), 14, vc, anchor="midleft")
             y += 30
+
+    def draw_chat(self, surf):
+        """왼쪽 아래 채팅창. 닫혀 있으면 최근 줄만 잠깐 보이고 흐려진다."""
+        now = time.time()
+        if self.chat_open:
+            lines = self.chat_lines[-10:]
+            bg = pygame.Surface((CHAT_W, 10 * 19 + 8), pygame.SRCALPHA)
+            bg.fill((8, 12, 22, 140))
+            surf.blit(bg, (CHAT_X, CHAT_Y - 10 * 19 - 10))
+        else:
+            lines = [ln for ln in self.chat_lines[-8:] if now - ln[0] < CHAT_SHOW]
+        y = CHAT_Y - 6
+        for t, parts in reversed(lines):
+            fade = 1.0 if self.chat_open else min(1.0, (CHAT_SHOW - (now - t)) / 2.0)
+            x = CHAT_X + 6
+            for text, col in parts:
+                c = tuple(int(v * (0.35 + 0.65 * fade)) for v in col)
+                x = ui.text(surf, text, (x, y), 14, c, anchor="bottomleft").right
+            y -= 19
+        if self.chat_open:
+            self.chat_in.draw(surf)
 
     def draw_announces(self, surf):
         now = time.time()

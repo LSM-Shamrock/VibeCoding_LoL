@@ -146,14 +146,16 @@ def build_bush(rx, rz, seed=0):
     """타원 범위를 채우는 풀 덤불. 원점이 부쉬 중심."""
     rng = random.Random(seed)
     b = MeshBuilder()
-    dark, light = (0.16, 0.42, 0.3), (0.32, 0.66, 0.42)
-    n = int(rx * rz * 9)
+    dark, light = (0.18, 0.42, 0.26), (0.36, 0.64, 0.36)
+    # 둥글게 뭉친 잎 덩어리 (가시처럼 보이지 않게 원뿔 대신 납작한 구)
+    n = int(rx * rz * 3.2)
     for _ in range(n):
         a = rng.uniform(0, math.tau)
         k = math.sqrt(rng.uniform(0, 1))
-        x, z = math.cos(a) * rx * k * 0.95, math.sin(a) * rz * k * 0.95
-        h = rng.uniform(0.75, 1.25) * (1.0 - 0.25 * k)
-        b.cone((x, 0, z), rng.uniform(0.22, 0.38), h, _mix(dark, light, rng.uniform(0, 1)), seg=5)
+        x, z = math.cos(a) * rx * k * 0.85, math.sin(a) * rz * k * 0.85
+        r = rng.uniform(0.42, 0.62) * (1.0 - 0.2 * k)
+        y = r * 0.55 + rng.uniform(0.0, 0.25) * (1.0 - k)
+        b.sphere((x, y, z), r, _mix(dark, light, rng.uniform(0, 1)), seg=8, rings=5, scale=(1.0, 0.8, 1.0))
     return b
 
 
