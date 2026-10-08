@@ -142,20 +142,33 @@ def build_minion_weapon(mtype, team):
 
 
 # ------------------------------------------------------------------ 부쉬
-def build_bush(rx, rz, seed=0):
-    """타원 범위를 채우는 풀 덤불. 원점이 부쉬 중심."""
+def build_bush(rx, rz, seed=7):
+    """타원 범위를 빈틈없이 채우는 둥근 잎 덤불. 원점이 부쉬 중심.
+
+    촘촘한 육각 격자에 비슷한 크기의 잎 덩어리(납작한 구)를 서로 겹치게 깐다.
+    같은 seed 면 항상 같은 모양.
+    """
     rng = random.Random(seed)
     b = MeshBuilder()
     dark, light = (0.18, 0.42, 0.26), (0.36, 0.64, 0.36)
-    # 둥글게 뭉친 잎 덩어리 (가시처럼 보이지 않게 원뿔 대신 납작한 구)
-    n = int(rx * rz * 3.2)
-    for _ in range(n):
-        a = rng.uniform(0, math.tau)
-        k = math.sqrt(rng.uniform(0, 1))
-        x, z = math.cos(a) * rx * k * 0.85, math.sin(a) * rz * k * 0.85
-        r = rng.uniform(0.42, 0.62) * (1.0 - 0.2 * k)
-        y = r * 0.55 + rng.uniform(0.0, 0.25) * (1.0 - k)
+
+    def blob(x, z, r, y):
         b.sphere((x, y, z), r, _mix(dark, light, rng.uniform(0, 1)), seg=8, rings=5, scale=(1.0, 0.8, 1.0))
+
+    # 아래층: 간격(0.55)보다 반지름(0.42~)이 커서 이웃끼리 겹친다 → 빈 곳이 없다
+    step_x, step_z = 0.55, 0.48
+    zi = 0
+    z = -rz
+    while z <= rz + 1e-6:
+        x = -rx + (step_x / 2 if zi % 2 else 0.0)
+        while x <= rx + 1e-6:
+            k = (x / rx) ** 2 + (z / rz) ** 2          # 0 = 가운데, 1 = 가장자리
+            if k <= 0.92:
+                r = 0.42 + rng.uniform(-0.03, 0.03)
+                blob(x + rng.uniform(-0.06, 0.06), z + rng.uniform(-0.06, 0.06), r, r * 0.6)
+            x += step_x
+        z += step_z
+        zi += 1
     return b
 
 

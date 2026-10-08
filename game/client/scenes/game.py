@@ -225,7 +225,12 @@ class GameScene(Scene):
             app.models.champion(info["c"])
 
         # 부쉬
-        self.bush_meshes = [Mesh.from_builder(app.renderer, build_bush(rx, rz, seed=i))
+        # 모든 부쉬가 같은 모양 (크기가 같으면 같은 메시를 공유)
+        shapes = {}
+        for bx, bz, rx, rz in mapdata.BUSHES:
+            if (rx, rz) not in shapes:
+                shapes[(rx, rz)] = Mesh.from_builder(app.renderer, build_bush(rx, rz))
+        self.bush_meshes = [shapes[(rx, rz)]
                             for i, (bx, bz, rx, rz) in enumerate(mapdata.BUSHES)]
         self.board = {}             # 점수판(Tab): 챔피언 id -> [id, 레벨, 킬, 데스, 어시, CS, 골드, 아이템, 사망, 부활초]
         # 시야 격자: 칸 중심 좌표와 각 칸의 부쉬 번호를 미리 계산
