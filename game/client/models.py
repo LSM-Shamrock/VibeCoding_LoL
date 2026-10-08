@@ -231,8 +231,8 @@ class ModelLibrary:
             "frost_arrow": self._mesh(P.build_frost_bolt()),
             "snowball": self._mesh(P.build_orb((0.95, 0.97, 1.0), 0.28)),
             "turret_shot": self._mesh(P.build_orb((1.0, 0.85, 0.5), 0.3)),
-            "minion_bolt": self._mesh(P.build_orb((1.0, 1.0, 1.0), 0.12)),
-            "cannon_ball": self._mesh(P.build_orb((0.3, 0.3, 0.3), 0.18)),
+            "minion_bolt": self._mesh(P.build_orb((1.0, 1.0, 1.0), 0.06)),
+            "cannon_ball": self._mesh(P.build_orb((0.55, 0.55, 0.6), 0.09)),
         }
         self.orb = self._mesh(P.build_orb((1, 1, 1), 1.0))
         self.team_meshes = {}

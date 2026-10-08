@@ -1,7 +1,6 @@
 """로비: 방 목록 / 방 만들기 / 입장."""
 import pygame
 
-from ...shared.constants import MAX_TEAM_SIZE
 from .. import ui
 from ..app import HEIGHT, WIDTH, Scene
 
@@ -13,24 +12,18 @@ class LobbyScene(Scene):
         self.app.room = None
         self.selected = None
         self.last_click = 0
-        self.size = 5
         self.refresh_t = 0.0
         self.name_in = ui.TextInput((820, 200, 360, 40), f"{self.app.my_name}의 방", 20, "방 이름")
-        self.btn_minus = ui.Button((900, 290, 40, 40), "-", lambda: self.set_size(-1))
-        self.btn_plus = ui.Button((1060, 290, 40, 40), "+", lambda: self.set_size(1))
-        self.btn_create = ui.Button((820, 360, 360, 48), "방 만들기", self.create, color=(40, 110, 180))
+        self.btn_create = ui.Button((820, 256, 360, 48), "방 만들기", self.create, color=(40, 110, 180))
         self.btn_join = ui.Button((90, 620, 200, 46), "입장", self.join, color=(40, 110, 180))
         self.btn_refresh = ui.Button((300, 620, 150, 46), "새로고침", self.refresh)
         self.btn_back = ui.Button((1030, 640, 150, 40), "접속 종료", self.back, color=(90, 45, 55))
-        self.buttons = [self.btn_minus, self.btn_plus, self.btn_create, self.btn_join, self.btn_refresh, self.btn_back]
+        self.buttons = [self.btn_create, self.btn_join, self.btn_refresh, self.btn_back]
         self.row_rects = []
         self.refresh()
 
-    def set_size(self, d):
-        self.size = max(1, min(MAX_TEAM_SIZE, self.size + d))
-
     def create(self):
-        self.app.send({"t": "create_room", "name": self.name_in.value, "size": self.size})
+        self.app.send({"t": "create_room", "name": self.name_in.value})
 
     def join(self, rid=None):
         rid = rid if rid is not None else self.selected
@@ -79,7 +72,6 @@ class LobbyScene(Scene):
         ui.panel(surf, (70, 140, 680, 460))
         ui.text(surf, "방 이름", (95, 156), 15, ui.TEXT_DIM)
         ui.text(surf, "방장", (380, 156), 15, ui.TEXT_DIM)
-        ui.text(surf, "모드", (510, 156), 15, ui.TEXT_DIM)
         ui.text(surf, "인원", (580, 156), 15, ui.TEXT_DIM)
         ui.text(surf, "상태", (650, 156), 15, ui.TEXT_DIM)
         self.row_rects = []
@@ -94,7 +86,6 @@ class LobbyScene(Scene):
                 pygame.draw.rect(surf, (50, 90, 150, 200) if sel else (40, 60, 90, 160), rect, border_radius=4)
             ui.text(surf, r["name"], (95, y + 16), 16, anchor="midleft")
             ui.text(surf, r["host"], (380, y + 16), 15, ui.TEXT_DIM, anchor="midleft")
-            ui.text(surf, f"{r['size']}v{r['size']}", (510, y + 16), 15, anchor="midleft")
             ui.text(surf, f"{r['count']}/{r['size'] * 2}", (580, y + 16), 15, anchor="midleft")
             col = ui.GREEN_C if r["phase"] == "waiting" else ui.GOLD
             ui.text(surf, PHASE_NAMES.get(r["phase"], r["phase"]), (650, y + 16), 15, col, anchor="midleft")
@@ -102,11 +93,8 @@ class LobbyScene(Scene):
             y += 34
 
         # 방 만들기
-        ui.panel(surf, (800, 140, 400, 290))
+        ui.panel(surf, (800, 140, 400, 186))
         ui.text(surf, "새 방 만들기", (820, 156), 20, bold=True)
         self.name_in.draw(surf)
-        ui.text(surf, "팀 인원", (820, 300), 16, ui.TEXT_DIM)
-        ui.text(surf, f"{self.size} vs {self.size}", (1000, 310), 22, anchor="center", bold=True)
-        ui.text(surf, "빈자리는 방 안에서 봇으로 채울 수 있습니다.", (820, 255), 14, ui.TEXT_DIM)
         for b in self.buttons:
             b.draw(surf)

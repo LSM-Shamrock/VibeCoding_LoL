@@ -1,7 +1,7 @@
-"""방: 팀 배치, 봇 추가/제거, 팀 인원 변경, 방장의 게임 시작."""
+"""방: 팀 배치, 봇 추가/제거, 방장의 게임 시작. (방은 항상 5v5, 각 팀 1명 이상이면 시작)"""
 import pygame
 
-from ...shared.constants import BLUE, MAX_TEAM_SIZE, RED, TEAM_NAMES
+from ...shared.constants import BLUE, RED, TEAM_NAMES
 from .. import ui
 from ..app import HEIGHT, WIDTH, Scene
 
@@ -14,8 +14,6 @@ class RoomScene(Scene):
     def on_enter(self):
         self.btn_start = ui.Button((WIDTH // 2 - 130, 600, 260, 54), "게임 시작", self.start, color=(40, 130, 80), size=20)
         self.btn_leave = ui.Button((40, 650, 140, 40), "방 나가기", self.leave, color=(90, 45, 55))
-        self.btn_minus = ui.Button((WIDTH // 2 - 90, 98, 36, 34), "-", lambda: self.set_size(-1))
-        self.btn_plus = ui.Button((WIDTH // 2 + 54, 98, 36, 34), "+", lambda: self.set_size(1))
         self.slot_buttons = []
 
     @property
@@ -24,10 +22,6 @@ class RoomScene(Scene):
 
     def is_host(self):
         return self.room and self.room["host"] == self.app.my_key
-
-    def set_size(self, d):
-        size = max(1, min(MAX_TEAM_SIZE, self.room["size"] + d))
-        self.app.send({"t": "set_size", "size": size})
 
     def start(self):
         self.app.send({"t": "start_game"})
@@ -71,9 +65,8 @@ class RoomScene(Scene):
         if self.btn_leave.handle(e):
             return
         if self.is_host():
-            for b in (self.btn_start, self.btn_minus, self.btn_plus):
-                if b.handle(e):
-                    return
+            if self.btn_start.handle(e):
+                return
         for b in self.slot_buttons:
             if b.handle(e):
                 return
@@ -85,7 +78,6 @@ class RoomScene(Scene):
         teams = [sum(1 for m in self.room["members"] if m["team"] == t) for t in (BLUE, RED)]
         self.btn_start.enabled = self.is_host() and all(teams)
         self.btn_start.visible = self.is_host()
-        self.btn_minus.visible = self.btn_plus.visible = self.is_host()
 
     def draw_ui(self, surf):
         shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
@@ -99,10 +91,6 @@ class RoomScene(Scene):
         ui.panel(surf, (WIDTH - 300, 24, 276, 64))
         ui.text(surf, "접속 주소", (WIDTH - 284, 34), 14, ui.TEXT_DIM)
         ui.text(surf, self.app.share_addr, (WIDTH - 284, 54), 20, ui.GOLD, bold=True)
-        ui.text(surf, f"{room['size']} vs {room['size']}", (WIDTH // 2, 115), 24, anchor="center", bold=True)
-        if self.is_host():
-            self.btn_minus.draw(surf)
-            self.btn_plus.draw(surf)
 
         for team in (BLUE, RED):
             x = COL_X[team]

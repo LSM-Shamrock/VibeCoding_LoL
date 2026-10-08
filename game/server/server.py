@@ -33,6 +33,7 @@ class Member:
         self.client = client
         self.champ = None
         self.locked = False
+        self.left = False            # 게임 도중 나감 (챔피언은 그 자리에 가만히 남는다)
 
     def public(self):
         return {"key": self.key, "name": self.name, "team": self.team, "bot": self.bot,
@@ -56,7 +57,8 @@ class Room:
         return [m for m in self.members if m.team == team]
 
     def humans(self):
-        return [m for m in self.members if not m.bot]
+        """접속 중인 사람 플레이어."""
+        return [m for m in self.members if not m.bot and m.client is not None]
 
     def member(self, key):
         for m in self.members:
@@ -173,7 +175,7 @@ class GameServer:
         elif t == "create_room":
             if room:
                 return self.error(client, "이미 방에 들어가 있습니다.")
-            size = max(1, min(MAX_TEAM_SIZE, int(msg.get("size", 5))))
+            size = MAX_TEAM_SIZE        # 방은 항상 5v5 (각 팀 1명 이상이면 시작 → 1v1, 2v2 ... 자유)
             name = (str(msg.get("name") or f"{client.name}의 방")).strip()[:24]
             r = Room(next(self._room_ids), name, size, client.key)
             self.rooms[r.id] = r
@@ -214,18 +216,6 @@ class GameServer:
             if m and m.bot:
                 room.members.remove(m)
                 self.broadcast_room(room)
-        elif t == "set_size":
-            if client.key != room.host_key or room.phase != "waiting":
-                return
-            size = max(1, min(MAX_TEAM_SIZE, int(msg.get("size", room.team_size))))
-            for team in (BLUE, RED):
-                while len(room.team_members(team)) > size:
-                    bots = [m for m in room.team_members(team) if m.bot]
-                    if not bots:
-                        return self.error(client, "사람 플레이어가 있어 팀 인원을 줄일 수 없습니다.")
-                    room.members.remove(bots[-1])
-            room.team_size = size
-            self.broadcast_room(room)
         elif t == "start_game":
             if client.key != room.host_key or room.phase != "waiting":
                 return
@@ -271,16 +261,14 @@ class GameServer:
             return
         m = room.member(client.key)
         if m:
-            if room.phase == "ingame" and room.sim:
-                # 게임 중 나가면 봇이 이어서 조종
-                m.bot = True
+            if room.phase in ("ingame", "ended") and room.sim:
+                # 게임 중 나가면 챔피언은 명령 없이 그 자리에 가만히 남는다 (AI 가 대신하지 않음)
                 m.client = None
-                m.name = f"{m.name}(봇)"
+                m.left = True
                 ch = room.sim.by_key.get(m.key)
                 if ch:
-                    from .bot import BotBrain
-                    ch.is_bot = True
-                    room.sim.brains[ch.id] = BotBrain(ch)
+                    ch.clear_orders()
+                    ch.recall_at = None
             else:
                 room.members.remove(m)
         if not room.humans():
@@ -349,9 +337,10 @@ class GameServer:
             sim.update(dt)
             room.tick += 1
             if room.tick % SNAPSHOT_EVERY == 0 or sim.winner is not None:
-                data = encode(sim.snapshot())
+                # 팀마다 자기 시야에 맞춘 스냅샷
+                data = {team: encode(snap) for team, snap in sim.snapshots().items()}
                 for m in room.humans():
-                    m.client.conn.send_raw(data)
+                    m.client.conn.send_raw(data[m.team])
             if sim.winner is not None:
                 room.phase = "ended"
                 room.ended_at = time.time()
@@ -362,8 +351,8 @@ class GameServer:
         if room.phase == "ended" and time.time() - room.ended_at >= RETURN_TO_ROOM_DELAY:
             room.phase = "waiting"
             room.sim = None
-            # 게임 중 나간 사람(봇으로 전환됨)은 방에서 제거
-            room.members = [m for m in room.members if not (m.bot and m.name.endswith("(봇)"))]
+            # 게임 중 나간 사람은 방에서 제거
+            room.members = [m for m in room.members if not m.left]
             for m in room.members:
                 m.locked = False
             self.broadcast_room(room)

@@ -108,6 +108,7 @@ class App:
     # ------------------------------------------------------------------ 장면
     def set_scene(self, scene):
         self.scene = scene
+        self.renderer.vision = None     # 전장의 안개는 인게임 장면에서만
         self.set_fullscreen(scene.fullscreen)
         pygame.event.set_grab(scene.grab_mouse)
         scene.on_enter()

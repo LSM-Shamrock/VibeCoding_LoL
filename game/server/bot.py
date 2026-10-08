@@ -67,6 +67,19 @@ class BotBrain:
                     return True
         return False
 
+    def in_danger(self, sim):
+        """귀환하면 안 되는 상황: 최근 피해, 근처에 보이는 적 챔피언/미니언, 적 포탑 사거리."""
+        c = self.c
+        if sim.time - c.last_hit_at < 3.0:
+            return True
+        for e in sim.champions.values():
+            if e.team != c.team and not e.dead and c.dist_to(e) <= 16 and sim.can_see(c.team, e):
+                return True
+        for m in sim.minions.values():
+            if m.team != c.team and c.dist_to(m) <= 8 and sim.can_see(c.team, m):
+                return True
+        return any(c.dist_to(s) <= mapdata.TURRET_RANGE + 2 for s in self.enemy_turrets(sim))
+
     def ready(self, sim, slot):
         c = self.c
         if c.ranks.get(slot, 0) <= 0 or sim.time < c.ready_at[slot]:
@@ -95,11 +108,26 @@ class BotBrain:
         fx, fz = mapdata.fountain_pos(c.team)
         rng_atk = c.stats["attack_range"]
 
-        enemies = [e for e in sim.champions.values() if e.team != c.team and not e.dead and c.dist_to(e) <= 13]
+        # 봇도 시야 안의 적만 안다
+        enemies = [e for e in sim.champions.values()
+                   if e.team != c.team and not e.dead and c.dist_to(e) <= 13 and sim.can_see(c.team, e)]
         allies = [a for a in sim.champions.values() if a.team == c.team and not a.dead and c.dist_to(a) <= 10]
+
+        # ---- 귀환 중: 안전하면 그대로 두고, 위험해지면 귀환을 멈추고 아래 판단(후퇴 등)으로
+        if c.recall_at is not None:
+            if not self.in_danger(sim):
+                return
+            c.recall_at = None
+        # 우물에서는 거의 다 찰 때까지 회복
+        if sim.in_fountain(c) and (hp_ratio < 0.9 or c.mana < c.max_mana * 0.6):
+            return
 
         # ---- 위험: 후퇴
         if hp_ratio < 0.28:
+            # 안전할 때만 귀환, 아니면 먼저 우물 쪽으로 물러난다
+            if not sim.in_fountain(c) and not self.in_danger(sim):
+                sim.recall(c)
+                return
             relic = self.safe_relic(sim, 16)
             if relic and not enemies:
                 sim.cmd_move(c, relic.x, relic.z)

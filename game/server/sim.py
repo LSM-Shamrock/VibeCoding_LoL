@@ -1,8 +1,10 @@
 ﻿"""칼바람 모드 게임 시뮬레이션 (서버 권한).
 
 - 단일 라인, 양 팀 외곽/내부 포탑 → 억제기 → 쌍둥이 포탑 → 넥서스
-- 레벨 3, 1400 골드로 시작 / 귀환 불가 / 상점은 사망 중이거나 우물에서만
-- 우물에서 체력이 회복되지 않으며 체력 회복 유물(구슬)이 라인에 생성
+- 레벨 3, 1400 골드로 시작 / B 귀환(8초) / 상점은 사망 중이거나 우물에서만
+- 우물에서 체력·마나 회복, 라인에는 체력 회복 유물(구슬)도 생성
+- 시야: 팀마다 챔피언·미니언·구조물 주변만 보이고, 부쉬 안은 같은 부쉬 안에서만 보인다
+- 포탑 방패: 포탑 체력이 한 칸(1/5) 깎일 때마다 근처 적 챔피언에게 골드
 - 30초마다 미니언 웨이브, 억제기 파괴 시 슈퍼 미니언
 - 소환사 주문: D 점멸, F 표식(눈덩이)
 """
@@ -13,10 +15,11 @@ from ..shared import data as gamedata
 from ..shared import mapdata
 from ..shared.constants import (
     ASSIST_GOLD_TOTAL, ASSIST_WINDOW, BLUE, FIRST_BLOOD_BONUS, FIRST_WAVE_TIME, FLASH_COOLDOWN,
-    FLASH_RANGE, FOUNTAIN_LASER_DPS, FOUNTAIN_LASER_RADIUS, FOUNTAIN_RADIUS, INHIBITOR_RESPAWN,
+    FLASH_RANGE, FOUNTAIN_HEAL_PCT, FOUNTAIN_LASER_DPS, FOUNTAIN_LASER_RADIUS, FOUNTAIN_RADIUS, INHIBITOR_RESPAWN,
     INVENTORY_SLOTS, KILL_GOLD, MARK_COOLDOWN, MARK_DASH_SPEED, MARK_RANGE, MARK_RECAST_TIME,
-    MARK_SPEED, MAX_LEVEL, PASSIVE_GOLD_PER_SEC, PASSIVE_XP_PER_SEC, RED, RELIC_FIRST_SPAWN, RELIC_HEAL_PCT, RELIC_RADIUS,
-    RELIC_RESPAWN, SELL_RATIO, WAVE_INTERVAL, XP_SHARE_RANGE, death_timer, xp_to_next,
+    MARK_SPEED, MAX_LEVEL, PASSIVE_GOLD_PER_SEC, PASSIVE_XP_PER_SEC, PLATE_SHARE_RANGE, RECALL_TIME, RED,
+    RELIC_FIRST_SPAWN, RELIC_HEAL_PCT, RELIC_RADIUS, RELIC_RESPAWN, SELL_RATIO, SIGHT, WAVE_INTERVAL, XP_SHARE_RANGE,
+    death_timer, xp_to_next,
 )
 from .bot import BotBrain
 from .entities import (
@@ -25,6 +28,7 @@ from .entities import (
 
 MINION_AGGRO = 7.0
 TURRET_PERIOD = 0.85
+TURRET_CHAMP_DMG = 85.0         # 포탑 → 챔피언 기본 피해 (+분당 2.5, 연속 공격 시 증가)
 SLOTS = ("Q", "W", "E", "R")
 
 
@@ -62,6 +66,9 @@ class Simulation:
         self.winner = None
         self.score = {BLUE: 0, RED: 0}
         self.rng = random.Random()
+        self.visible = {BLUE: set(), RED: set()}    # 팀별로 보이는 적 유닛 id
+        self._observers = {BLUE: [], RED: []}
+        self.gone_minions = []      # 지난 스냅샷 이후 죽은 미니언 (클라이언트 사라짐 효과용)
 
         for info in mapdata.structure_layout():
             s = Structure(self.new_id(), info)
@@ -131,6 +138,48 @@ class Simulation:
                     out.append(m)
         return out
 
+    # ------------------------------------------------------------------ 시야
+    def observers(self, team):
+        """team 의 시야 제공자 목록: (x, z, 시야 반경, 서 있는 부쉬 번호)."""
+        fx, fz = mapdata.fountain_pos(team)
+        out = [(fx, fz, SIGHT["fountain"], -1)]
+        for c in self.champions.values():
+            if c.team == team and not c.dead:
+                out.append((c.x, c.z, SIGHT["champion"], mapdata.bush_at(c.x, c.z)))
+        for m in self.minions.values():
+            if m.team == team:
+                out.append((m.x, m.z, SIGHT["minion"], mapdata.bush_at(m.x, m.z)))
+        for st in self.structures.values():
+            if st.team == team and st.alive:
+                out.append((st.x, st.z, SIGHT[st.skind], -1))
+        return out
+
+    @staticmethod
+    def seen_by(obs, x, z):
+        """(x, z) 가 시야 제공자들 중 하나에게 보이는가. 부쉬 안은 같은 부쉬에 있어야 보인다."""
+        bush = mapdata.bush_at(x, z)
+        for ox, oz, r, ob in obs:
+            if (x - ox) ** 2 + (z - oz) ** 2 <= r * r and (bush < 0 or bush == ob):
+                return True
+        return False
+
+    def update_vision(self):
+        for team in (BLUE, RED):
+            obs = self.observers(team)
+            vis = set()
+            for c in self.champions.values():
+                if c.team != team and not c.dead and self.seen_by(obs, c.x, c.z):
+                    vis.add(c.id)
+            for m in self.minions.values():
+                if m.team != team and self.seen_by(obs, m.x, m.z):
+                    vis.add(m.id)
+            self.visible[team] = vis
+            self._observers[team] = obs
+
+    def can_see(self, team, u):
+        """team 이 유닛 u 를 볼 수 있는가 (아군과 구조물은 항상 보임)."""
+        return u.team == team or isinstance(u, Structure) or u.id in self.visible[team]
+
     def in_fountain(self, c):
         fx, fz = mapdata.fountain_pos(c.team)
         return math.hypot(c.x - fx, c.z - fz) <= FOUNTAIN_RADIUS
@@ -140,7 +189,8 @@ class Simulation:
 
     # ------------------------------------------------------------------ 이동
     def obstacles(self):
-        return [s for s in self.structures.values() if s.alive]
+        # 부서진 구조물(잔해)도 살아 있을 때와 같은 크기로 길을 막는다
+        return list(self.structures.values())
 
     def move_unit(self, u, tx, tz, speed, dt, stop_dist=0.0):
         """u 를 (tx, tz) 쪽으로 이동. 도착하면 True."""
@@ -209,6 +259,12 @@ class Simulation:
         else:
             dmg = amount * (2.0 - 100.0 / (100.0 - res))
         target.hp -= dmg
+        if isinstance(target, Champion) and dmg > 0:
+            target.recall_at = None         # 피해를 받으면 귀환 취소
+            target.last_hit_at = self.time
+        if isinstance(target, Structure):
+            while target.plates_left > 0 and target.hp <= target.max_hp * (target.plates_left - 1) / target.plates:
+                self.break_plate(target)
 
         src_id = src.id if src is not None else 0
         self.event(e="dmg", s=src_id, d=target.id, v=int(round(dmg)), ty=dtype[0])
@@ -225,6 +281,18 @@ class Simulation:
             self.on_death(target, src)
         return dmg
 
+    def break_plate(self, s):
+        """포탑 방패 한 칸 파괴: 근처 적 챔피언들이 골드를 나눠 갖는다."""
+        s.plates_left -= 1
+        near = [c for c in self.champions.values()
+                if c.team != s.team and not c.dead and c.dist_to(s) <= PLATE_SHARE_RANGE]
+        if near and s.plate_gold:
+            share = s.plate_gold / len(near)
+            for c in near:
+                c.gold += share
+                self.event(e="gold", d=c.id, v=int(round(share)), x=round(s.x, 2), z=round(s.z, 2))
+        self.event(e="fx", fx="plate", x=round(s.x, 2), z=round(s.z, 2))
+
     def heal(self, c, amount):
         c.hp = min(c.max_hp, c.hp + amount)
 
@@ -235,6 +303,7 @@ class Simulation:
         elif isinstance(target, Minion):
             target.alive = False
             self.minions.pop(target.id, None)
+            self.gone_minions.append(target.id)
             if isinstance(killer, Champion):
                 killer.gold += target.gold
                 killer.cs += 1
@@ -248,6 +317,7 @@ class Simulation:
 
     def champion_died(self, victim, killer):
         victim.dead = True
+        victim.recall_at = None
         victim.deaths += 1
         victim.respawn_at = self.time + death_timer(victim.level)
         victim.clear_orders()
@@ -341,14 +411,20 @@ class Simulation:
                 self.sell(c, int(msg["slot"]))
             elif c.dead:
                 return
+            elif cmd == "recall":
+                self.recall(c)
             elif cmd == "move":
+                c.recall_at = None
                 self.cmd_move(c, float(msg["x"]), float(msg["z"]))
             elif cmd == "amove":
+                c.recall_at = None
                 self.cmd_move(c, float(msg["x"]), float(msg["z"]))
                 c.attack_move = True
             elif cmd == "attack":
+                c.recall_at = None
                 self.cmd_attack(c, int(msg["id"]))
             elif cmd == "stop":
+                c.recall_at = None
                 c.clear_orders()
             elif cmd == "cast":
                 self.cast(c, msg["slot"], float(msg["x"]), float(msg["z"]))
@@ -372,13 +448,20 @@ class Simulation:
         if c.dash:
             return
         target = self.unit(uid)
-        if not self.targetable(target, c.team):
+        if not self.targetable(target, c.team) or not self.can_see(c.team, target):
             return
         if c.attack_target != uid:
             c.windup = None
         c.attack_target = uid
         c.move_target = None
         c.attack_move = False
+
+    def recall(self, c):
+        """귀환 시작: RECALL_TIME 동안 가만히 있으면 우물로 이동 (이동·공격·스킬·피해·기절 시 취소)."""
+        if c.dead or c.dash or c.recall_at is not None or c.stunned(self.time):
+            return
+        c.clear_orders()
+        c.recall_at = self.time + RECALL_TIME
 
     def level_ability(self, c, slot):
         if slot not in SLOTS or c.skill_points <= 0:
@@ -483,6 +566,7 @@ class Simulation:
             return
 
         c.mana -= cost
+        c.recall_at = None
         c.ready_at[slot] = self.time + c.cooldown_of(slot)
         c.windup = None
         c.cast_anim_until = self.time + 0.3
@@ -501,6 +585,7 @@ class Simulation:
         c.x, c.z = self.resolve_position(c.x + dx / d * dist, c.z + dz / d * dist, c.radius)
         c.dash = None
         c.windup = None
+        c.recall_at = None
         c.ready_at["D"] = self.time + FLASH_COOLDOWN
         self.face(c, x, z)
         self.event(e="fx", fx="flash", x=round(ox, 2), z=round(oz, 2), x2=round(c.x, 2), z2=round(c.z, 2))
@@ -512,6 +597,7 @@ class Simulation:
             c.mark = None
             if self.targetable(target, c.team) and not c.rooted(self.time):
                 c.clear_orders()
+                c.recall_at = None
                 c.dash = {"x": target.x, "z": target.z, "speed": MARK_DASH_SPEED, "follow": target.id, "empower": None}
             return
         if self.time < c.ready_at["F"] or c.stunned(self.time):
@@ -530,6 +616,7 @@ class Simulation:
             c.mark = (target.id, sim.time + MARK_RECAST_TIME)
         p.on_hit = on_hit
         self.projectiles[p.id] = p
+        c.recall_at = None
         c.ready_at["F"] = self.time + MARK_COOLDOWN
         self.face(c, x, z)
 
@@ -593,6 +680,7 @@ class Simulation:
                 del self.effects[e.id]
                 e.on_trigger(self, e)
         self.update_relics()
+        self.update_vision()
 
     def update_champion(self, c, dt):
         t = self.time
@@ -616,6 +704,20 @@ class Simulation:
             c.empower = None
         if c.mark and t > c.mark[1]:
             c.mark = None
+        if self.in_fountain(c):
+            self.heal(c, c.max_hp * FOUNTAIN_HEAL_PCT * dt)
+            c.mana = min(c.max_mana, c.mana + c.max_mana * FOUNTAIN_HEAL_PCT * dt)
+
+        # 귀환
+        if c.recall_at is not None:
+            if c.stunned(t):
+                c.recall_at = None
+            elif t >= c.recall_at:
+                c.recall_at = None
+                ox, oz = c.x, c.z
+                c.x, c.z = mapdata.spawn_points(c.team, 5)[c.id % 5]
+                c.clear_orders()
+                self.event(e="fx", fx="recall", x=round(ox, 2), z=round(oz, 2), x2=round(c.x, 2), z2=round(c.z, 2))
 
         # 적 우물 레이저
         efx, efz = mapdata.fountain_pos(other(c.team))
@@ -650,7 +752,7 @@ class Simulation:
                 return
 
         target = self.unit(c.attack_target) if c.attack_target else None
-        if c.attack_target and not self.targetable(target, c.team):
+        if c.attack_target and (not self.targetable(target, c.team) or not self.can_see(c.team, target)):
             c.attack_target = None
             target = None
 
@@ -718,7 +820,7 @@ class Simulation:
     def nearest_enemy_for_champion(self, c, radius):
         best, best_d = None, radius
         for u in list(self.champions.values()) + list(self.minions.values()) + list(self.structures.values()):
-            if not self.targetable(u, c.team):
+            if not self.targetable(u, c.team) or not self.can_see(c.team, u):
                 continue
             d = c.dist_to(u) - u.radius
             if d < best_d:
@@ -753,11 +855,11 @@ class Simulation:
         for exp, aid, hteam, hx, hz in self.help_calls:
             if hteam == m.team and math.hypot(hx - m.x, hz - m.z) <= MINION_AGGRO:
                 a = self.champions.get(aid)
-                if self.targetable(a, m.team) and m.dist_to(a) <= MINION_AGGRO:
+                if self.targetable(a, m.team) and m.dist_to(a) <= MINION_AGGRO and self.can_see(m.team, a):
                     return a
         best, best_d = None, MINION_AGGRO
         for e in self.minions.values():
-            if e.team != m.team:
+            if e.team != m.team and self.can_see(m.team, e):
                 d = m.dist_to(e)
                 if d < best_d:
                     best, best_d = e, d
@@ -771,7 +873,7 @@ class Simulation:
         if best:
             return best
         for c in self.champions.values():
-            if self.targetable(c, m.team):
+            if self.targetable(c, m.team) and self.can_see(m.team, c):
                 d = m.dist_to(c)
                 if d < best_d:
                     best, best_d = c, d
@@ -787,7 +889,7 @@ class Simulation:
         if m.windup:
             fire_at, tid = m.windup
             target = self.unit(tid)
-            if not self.targetable(target, m.team):
+            if not self.targetable(target, m.team) or not self.can_see(m.team, target):
                 m.windup = None
             elif t >= fire_at:
                 m.windup = None
@@ -800,7 +902,9 @@ class Simulation:
                 return
 
         target = self.unit(m.target) if m.target else None
-        if not self.targetable(target, m.team) or t >= m.retarget_at:
+        if target is not None and not self.can_see(m.team, target):
+            target = None                   # 시야에서 사라지면(부쉬 등) 놓친다
+        if target is None or not self.targetable(target, m.team) or t >= m.retarget_at:
             # 이미 교전 중인 대상이 사거리 안에 있으면 유지
             keep = (self.targetable(target, m.team)
                     and m.dist_to(target) <= m.attack_range + m.radius + target.radius + 0.3
@@ -902,7 +1006,7 @@ class Simulation:
             return
         s.attack_ready_at = t + TURRET_PERIOD
         if isinstance(target, Champion):
-            dmg = (170 + 5 * min(30.0, t / 60.0)) * (1 + 0.4 * min(s.ramp, 3))
+            dmg = (TURRET_CHAMP_DMG + 2.5 * min(30.0, t / 60.0)) * (1 + 0.4 * min(s.ramp, 3))
             s.ramp += 1
 
             def hit(sim, tg, s=s, dmg=dmg):
@@ -978,51 +1082,81 @@ class Simulation:
     def static_info(self):
         return {
             "structures": [{"i": s.id, "k": s.skind, "key": s.key, "tm": s.team, "x": s.x, "z": s.z,
-                            "r": s.radius, "mhp": s.max_hp} for s in self.structures.values()],
+                            "r": s.radius, "mhp": s.max_hp, "pl": s.plates} for s in self.structures.values()],
             "champions": [{"i": c.id, "pk": c.member_key, "n": c.name, "c": c.champ_id, "tm": c.team, "bot": c.is_bot}
                           for c in self.champions.values()],
         }
 
-    def snapshot(self):
+    def event_visible(self, team, ev):
+        """이 이벤트를 team 에게 보내도 되는가 (안 보이는 곳의 정보는 숨긴다)."""
+        e = ev.get("e")
+        if e in ("dmg", "gold"):
+            keys = ("s", "d") if e == "dmg" else ("d",)
+            return any((ch := self.champions.get(ev.get(k))) is not None and ch.team == team for k in keys)
+        if e in ("cast", "levelup"):
+            u = self.champions.get(ev.get("d"))
+            return u is not None and self.can_see(team, u)
+        if e == "fx" and "x" in ev:
+            obs = self._observers[team]
+            pts = [(ev["x"], ev["z"])] + ([(ev["x2"], ev["z2"])] if "x2" in ev else [])
+            return any(self.seen_by(obs, x, z) for x, z in pts)
+        return True
+
+    def champion_row(self, c, t):
+        st = []
+        if c.stunned(t):
+            st.append("stun")
+        if c.slow_amount(t) > 0:
+            st.append("slow")
+        if c.buffs:
+            st.append("buff")
+        if c.empower:
+            st.append("emp")
+        return {
+            "i": c.id, "x": round(c.x, 2), "z": round(c.z, 2), "f": round(c.facing, 2),
+            "hp": round(c.hp), "mhp": round(c.max_hp), "mp": round(c.mana), "mmp": round(c.max_mana),
+            "lv": c.level, "xp": round(c.xp), "xpn": xp_to_next(c.level), "g": int(c.gold), "it": c.items,
+            "ab": c.ranks, "sp": c.skill_points,
+            "cd": {k: round(max(0.0, v - t), 1) for k, v in c.ready_at.items()},
+            "mk": bool(c.mark), "dead": c.dead, "rt": round(max(0.0, c.respawn_at - t), 1) if c.dead else 0,
+            "rc": round(max(0.0, c.recall_at - t), 1) if c.recall_at is not None else 0,
+            "st": st, "a": c.anim, "k": c.kills, "d": c.deaths, "as": c.assists, "cs": c.cs,
+            "shop": self.can_shop(c),
+            "s": {"ad": round(c.stats["ad"]), "ap": round(c.stats["ap"]), "ar": round(c.stats["armor"]),
+                  "mr": round(c.stats["mr"]), "aspd": round(c.stats["attack_speed"], 2),
+                  "ms": round(c.stats["move_speed"] * 100), "ah": round(c.stats["ability_haste"]),
+                  "cr": round(c.stats["crit"] * 100)},
+        }
+
+    def snapshots(self):
+        """팀별 스냅샷 {팀: 스냅샷}. 각 팀은 자기 시야에 있는 적만 받는다."""
         t = self.time
-        champs = []
-        for c in self.champions.values():
-            st = []
-            if c.stunned(t):
-                st.append("stun")
-            if c.slow_amount(t) > 0:
-                st.append("slow")
-            if c.buffs:
-                st.append("buff")
-            if c.empower:
-                st.append("emp")
-            champs.append({
-                "i": c.id, "x": round(c.x, 2), "z": round(c.z, 2), "f": round(c.facing, 2),
-                "hp": round(c.hp), "mhp": round(c.max_hp), "mp": round(c.mana), "mmp": round(c.max_mana),
-                "lv": c.level, "xp": round(c.xp), "xpn": xp_to_next(c.level), "g": int(c.gold), "it": c.items,
-                "ab": c.ranks, "sp": c.skill_points,
-                "cd": {k: round(max(0.0, v - t), 1) for k, v in c.ready_at.items()},
-                "mk": bool(c.mark), "dead": c.dead, "rt": round(max(0.0, c.respawn_at - t), 1) if c.dead else 0,
-                "st": st, "a": c.anim, "k": c.kills, "d": c.deaths, "as": c.assists, "cs": c.cs,
-                "shop": self.can_shop(c),
-                "s": {"ad": round(c.stats["ad"]), "ap": round(c.stats["ap"]), "ar": round(c.stats["armor"]),
-                      "mr": round(c.stats["mr"]), "aspd": round(c.stats["attack_speed"], 2),
-                      "ms": round(c.stats["move_speed"] * 100), "ah": round(c.stats["ability_haste"]),
-                      "cr": round(c.stats["crit"] * 100)},
-            })
-        minions = [[m.id, MINION_CODES[m.mtype], m.team, round(m.x, 2), round(m.z, 2), round(m.facing, 2),
-                    round(m.hp), round(m.max_hp), m.anim] for m in self.minions.values()]
+        champs = {c.id: self.champion_row(c, t) for c in self.champions.values()}
+        # 점수판(Tab)은 시야와 상관없이 모두에게
+        board = [[c.id, c.level, c.kills, c.deaths, c.assists, c.cs, int(c.gold), c.items, c.dead,
+                  round(max(0.0, c.respawn_at - t)) if c.dead else 0] for c in self.champions.values()]
         structs = [[s.id, round(s.hp), int(s.alive), int(self.vulnerable(s)), s.target or 0]
                    for s in self.structures.values()]
-        projs = [[p.id, p.style, p.team, round(p.x, 2), round(p.z, 2), round(p.dx, 2), round(p.dz, 2)]
-                 for p in self.projectiles.values()]
-        effs = [[e.id, e.style, e.team, round(e.x, 2), round(e.z, 2), e.radius, round(e.trigger_at - t, 2)]
-                for e in self.effects.values()]
         relics = [[r.id, r.x, r.z, int(r.active)] for r in self.relics]
-        snap = {
-            "t": "snap", "time": round(t, 2), "score": [self.score[BLUE], self.score[RED]],
-            "ch": champs, "mn": minions, "st": structs, "pj": projs, "ef": effs, "rl": relics,
-            "ev": self.events, "wave": round(max(0.0, self.next_wave_at - t), 1),
-        }
+        out = {}
+        for team in (BLUE, RED):
+            obs = self._observers[team]
+            vis = self.visible[team]
+            minions = [[m.id, MINION_CODES[m.mtype], m.team, round(m.x, 2), round(m.z, 2), round(m.facing, 2),
+                        round(m.hp), round(m.max_hp), m.anim]
+                       for m in self.minions.values() if m.team == team or m.id in vis]
+            projs = [[p.id, p.style, p.team, round(p.x, 2), round(p.z, 2), round(p.dx, 2), round(p.dz, 2)]
+                     for p in self.projectiles.values() if p.team == team or self.seen_by(obs, p.x, p.z)]
+            effs = [[e.id, e.style, e.team, round(e.x, 2), round(e.z, 2), e.radius, round(e.trigger_at - t, 2)]
+                    for e in self.effects.values() if e.team == team or self.seen_by(obs, e.x, e.z)]
+            out[team] = {
+                "t": "snap", "time": round(t, 2), "score": [self.score[BLUE], self.score[RED]],
+                "ch": [row for cid, row in champs.items() if self.champions[cid].team == team or cid in vis],
+                "mn": minions, "st": structs, "pj": projs, "ef": effs, "rl": relics, "sb": board,
+                "gone": self.gone_minions,
+                "ev": [ev for ev in self.events if self.event_visible(team, ev)],
+                "wave": round(max(0.0, self.next_wave_at - t), 1),
+            }
         self.events = []
-        return snap
+        self.gone_minions = []
+        return out

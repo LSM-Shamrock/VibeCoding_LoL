@@ -40,6 +40,9 @@ uniform sampler2D u_tex;
 uniform vec3 u_cam;
 uniform vec3 u_fog_color;
 uniform float u_fog;
+uniform bool u_use_vis;      // 전장의 안개: 시야 밖은 어둡게
+uniform sampler2D u_vis;     // 시야 격자 (r: 1 보임, 0 안 보임)
+uniform vec4 u_vis_rect;     // 격자가 덮는 월드 범위 (x0, z0, 폭, 높이)
 in vec3 v_nrm;
 in vec3 v_col;
 in vec2 v_uv;
@@ -65,6 +68,13 @@ void main() {
     float dist = length(u_cam - v_wpos);
     float fog = clamp((dist - 45.0) / 70.0, 0.0, 1.0) * u_fog;
     c = mix(c, u_fog_color, fog);
+    if (u_use_vis) {
+        vec2 vuv = (v_wpos.xz - u_vis_rect.xy) / u_vis_rect.zw;
+        if (vuv.x >= 0.0 && vuv.x <= 1.0 && vuv.y >= 0.0 && vuv.y <= 1.0) {
+            float v = texture(u_vis, vuv).r;
+            c = mix(c * vec3(0.32, 0.34, 0.42), c, v);
+        }
+    }
     f_color = vec4(c, a * u_tint.a);
 }
 """
@@ -244,6 +254,7 @@ class Renderer:
         self.sky = SpaceSky(ctx)
         self.time = 0.0
         self.unit_quad = None
+        self.vision = None              # (텍스처, (x0, z0, 폭, 높이)) — 설정되면 시야 밖을 어둡게
         # 실제 창(프레임버퍼) 크기와, 논리 화면(width x height)이 그려질 영역
         self.window_size = (width, height)
         self.viewport = (0, 0, width, height)
@@ -282,6 +293,14 @@ class Renderer:
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
         self.ctx.depth_mask = True
         self.prog["u_vp"].write(gl_bytes(cam.vp))
+        if self.vision:
+            tex, rect = self.vision
+            tex.use(1)
+            self.prog["u_vis"].value = 1
+            self.prog["u_vis_rect"].value = rect
+            self.prog["u_use_vis"].value = True
+        else:
+            self.prog["u_use_vis"].value = False
         self.prog["u_cam"].value = tuple(float(v) for v in cam.eye())
 
     def draw(self, mesh, model, tint=(1, 1, 1, 1), emissive=(0, 0, 0), unlit=0.0):

@@ -2,7 +2,7 @@
 import math
 
 from ..shared import data as gamedata
-from ..shared.constants import START_GOLD, START_LEVEL
+from ..shared.constants import PLATE_GOLD, START_GOLD, START_LEVEL, TURRET_PLATES
 
 
 class Unit:
@@ -87,6 +87,8 @@ class Champion(Unit):
         self.dash = None             # {"x","z","speed","follow","on_end"}
         self.cast_anim_until = 0.0
         self.mark = None             # (표식 대상 id, 만료 시각)
+        self.recall_at = None        # 귀환 완료 시각 (정신집중 중일 때만)
+        self.last_hit_at = -99.0     # 마지막으로 피해를 받은 시각 (봇의 귀환 판단용)
 
         self.stats = {}
         self.recompute_stats(0.0, first=True)
@@ -160,10 +162,10 @@ class Champion(Unit):
 
 MINION_TYPES = {
     #           hp,  ad, 사거리, 공속, 이속, 반경, 골드, 경험치, 원거리
-    "melee":  (480, 13, 1.2, 1.25, 3.25, 0.45, 21, 60, False),
-    "caster": (300, 24, 5.0, 0.67, 3.25, 0.40, 14, 30, True),
-    "cannon": (920, 42, 3.0, 1.00, 3.25, 0.60, 60, 93, True),
-    "super":  (1600, 110, 1.7, 0.85, 3.25, 0.75, 40, 97, False),
+    "melee":  (480, 4.9, 1.2, 1.25, 3.25, 0.45, 21, 60, False),
+    "caster": (300, 9.0, 5.0, 0.67, 3.25, 0.40, 14, 30, True),
+    "cannon": (920, 15.8, 3.0, 1.00, 3.25, 0.60, 60, 93, True),
+    "super":  (1600, 41, 1.7, 0.85, 3.25, 0.75, 40, 97, False),
 }
 MINION_CODES = {"melee": 0, "caster": 1, "cannon": 2, "super": 3}
 TURRET_MINION_DMG = {"melee": 0.45, "caster": 0.70, "cannon": 0.14, "super": 0.07}
@@ -207,6 +209,10 @@ class Structure(Unit):
         self.target = None
         self.attack_ready_at = 0.0
         self.ramp = 0
+        # 포탑 방패: 체력을 plates 칸으로 나눠 한 칸 깎일 때마다 골드
+        self.plates = TURRET_PLATES if self.skind == "turret" else 0
+        self.plates_left = self.plates
+        self.plate_gold = PLATE_GOLD.get(self.key, 0)
 
 
 class Projectile:

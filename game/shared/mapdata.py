@@ -7,7 +7,7 @@ import math
 
 from .constants import BLUE, RED
 
-LANE_END = 64.0          # 맵 끝 (x 절댓값)
+LANE_END = 69.0          # 맵 끝 (x 절댓값) — 우물 원과 기둥 뒤까지 바닥이 이어지게
 LANE_HALF_WIDTH = 7.5    # 라인 구간 절반 폭
 BASE_HALF_WIDTH = 11.5   # 본진 구간 절반 폭
 BASE_START = 40.0        # |x| 가 이 이상이면 본진 구간으로 넓어짐
@@ -68,6 +68,27 @@ def structure_layout():
 RELIC_POSITIONS = [(-27.0, 5.0), (-13.0, -5.0), (13.0, 5.0), (27.0, -5.0)]
 
 TURRET_RANGE = 7.75
+
+# 부쉬(수풀): (x, z, 반지름 x, 반지름 z) 타원. 안에 있는 유닛은 같은 부쉬 안에 있는 적에게만 보인다.
+BUSHES = [
+    (-6.0, 5.6, 3.0, 1.9), (6.0, -5.6, 3.0, 1.9),
+    (-18.0, -5.6, 3.0, 1.9), (18.0, 5.6, 3.0, 1.9),
+    (-30.0, -5.6, 3.0, 1.9), (30.0, 5.6, 3.0, 1.9),
+]
+
+
+def bush_at(x, z):
+    """(x, z) 가 들어 있는 부쉬 번호 (없으면 -1)."""
+    for i, (bx, bz, rx, rz) in enumerate(BUSHES):
+        if ((x - bx) / rx) ** 2 + ((z - bz) / rz) ** 2 <= 1.0:
+            return i
+    return -1
+
+
+# 시야 격자 (클라이언트 전장의 안개 표시용): 맵을 덮는 범위와 칸 크기
+VIS_X0, VIS_X1 = -70.0, 70.0
+VIS_Z0, VIS_Z1 = -13.0, 13.0
+VIS_CELL = 0.5
 
 
 def spawn_points(team, count):

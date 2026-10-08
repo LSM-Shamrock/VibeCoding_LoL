@@ -13,16 +13,16 @@ PATH = os.path.join(ROOT, "keybinds.json")
 # (행동, 설정 창에 보일 이름) — 화면에 나오는 순서
 ACTIONS = [
     ("Q", "스킬 Q"), ("W", "스킬 W"), ("E", "스킬 E"), ("R", "스킬 R"),
-    ("D", "점멸"), ("F", "표식"),
+    ("D", "점멸"), ("F", "표식"), ("recall", "귀환"),
     ("attack_move", "공격 이동"), ("stop", "정지"),
     ("shop", "상점"), ("score", "점수판"),
     ("cam_lock", "카메라 고정 전환"), ("cam_center", "카메라 내 챔피언"),
 ]
 DEFAULTS = {
     "Q": (pygame.KSCAN_Q, "Q"), "W": (pygame.KSCAN_W, "W"), "E": (pygame.KSCAN_E, "E"), "R": (pygame.KSCAN_R, "R"),
-    "D": (pygame.KSCAN_D, "D"), "F": (pygame.KSCAN_F, "F"),
+    "D": (pygame.KSCAN_D, "D"), "F": (pygame.KSCAN_F, "F"), "recall": (pygame.KSCAN_B, "B"),
     "attack_move": (pygame.KSCAN_A, "A"), "stop": (pygame.KSCAN_S, "S"),
-    "shop": (pygame.KSCAN_B, "B"), "score": (pygame.KSCAN_TAB, "Tab"),
+    "shop": (pygame.KSCAN_P, "P"), "score": (pygame.KSCAN_TAB, "Tab"),
     "cam_lock": (pygame.KSCAN_Y, "Y"), "cam_center": (pygame.KSCAN_SPACE, "Space"),
 }
 RESERVED = {pygame.KSCAN_ESCAPE}     # ESC 는 설정 창 열기/닫기 전용
@@ -44,6 +44,7 @@ def key_name(e):
 class KeyBinds:
     def __init__(self):
         self.binds = dict(DEFAULTS)
+        self.spells_swapped = False     # True 면 D 키에 표식, F 키에 점멸 (챔피언 선택 화면에서 변경)
 
     @classmethod
     def load(cls):
@@ -51,9 +52,15 @@ class KeyBinds:
         try:
             with open(PATH, encoding="utf-8") as f:
                 data = json.load(f)
+            kb.spells_swapped = bool(data.pop("_spells_swapped", False))
             for action, (sc, name) in data.items():
                 if action in DEFAULTS:
                     kb.binds[action] = (int(sc), str(name))
+            # 저장 파일에 없는 새 행동(예: 귀환)의 기본 키와 겹치면, 겹친 쪽을 그 행동의 기본 키로 되돌린다
+            for new in (a for a in DEFAULTS if a not in data):
+                for other, (sc, _) in kb.binds.items():
+                    if other != new and sc == DEFAULTS[new][0]:
+                        kb.binds[other] = DEFAULTS[other]
         except (OSError, ValueError, TypeError):
             pass
         return kb
@@ -61,7 +68,9 @@ class KeyBinds:
     def save(self):
         try:
             with open(PATH, "w", encoding="utf-8") as f:
-                json.dump({a: list(v) for a, v in self.binds.items()}, f, ensure_ascii=False, indent=2)
+                data = {a: list(v) for a, v in self.binds.items()}
+                data["_spells_swapped"] = self.spells_swapped
+                json.dump(data, f, ensure_ascii=False, indent=2)
         except OSError:
             pass
 
@@ -85,6 +94,16 @@ class KeyBinds:
         self.binds[action] = (sc, key_name(e))
         self.save()
         return True
+
+    def spell_at(self, slot):
+        """D/F 자리(키)에 들어 있는 주문 id ("D" 점멸, "F" 표식)."""
+        if self.spells_swapped:
+            return "F" if slot == "D" else "D"
+        return slot
+
+    def swap_spells(self):
+        self.spells_swapped = not self.spells_swapped
+        self.save()
 
     def reset(self):
         self.binds = dict(DEFAULTS)

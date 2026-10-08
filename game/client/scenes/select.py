@@ -9,6 +9,7 @@ from ...shared.constants import BLUE, RED, TEAM_NAMES
 from .. import ui
 from ..app import HEIGHT, WIDTH, Scene
 from ..gl import model_matrix
+from .game import SPELL_INFO
 
 KEYS = ("Q", "W", "E", "R")
 
@@ -20,6 +21,10 @@ class SelectScene(Scene):
         self.preview = None
         self.card_rects = []
         self.btn_lock = ui.Button((WIDTH // 2 - 120, 498, 240, 46), "확정", self.lock, color=(40, 130, 80), size=20)
+        # 소환사 주문 순서 (D/F 자리 바꾸기) — 이 PC 의 설정으로 저장된다
+        cx = WIDTH // 2
+        self.spell_rects = {"D": pygame.Rect(cx - 76, 444, 44, 44), "F": pygame.Rect(cx + 32, 444, 44, 44)}
+        self.btn_swap = ui.Button((cx - 22, 451, 44, 30), "↔", self.app.keybinds.swap_spells, size=18)
         # 처음엔 첫 번째 챔피언을 미리 선택해 둔다
         self.pick(gamedata.default_champion_id())
 
@@ -42,7 +47,11 @@ class SelectScene(Scene):
             self.deadline = time.time() + msg.get("select_left", 0)
 
     def handle_event(self, e):
-        if self.btn_lock.handle(e):
+        if self.btn_lock.handle(e) or self.btn_swap.handle(e):
+            return
+        if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 and any(
+                r.collidepoint(e.pos) for r in self.spell_rects.values()):
+            self.app.keybinds.swap_spells()
             return
         me = self.me()
         if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 and me and not me["locked"]:
@@ -137,3 +146,13 @@ class SelectScene(Scene):
                 ui.text_block(surf, desc, (x, 636), colw - 14, 12, ui.TEXT_DIM, 2)
 
         self.btn_lock.draw(surf)
+
+        # 소환사 주문 (클릭하거나 ↔ 로 순서 바꾸기)
+        binds = self.app.keybinds
+        for slot, rect in self.spell_rects.items():
+            name, col, _, _ = SPELL_INFO[binds.spell_at(slot)]
+            pygame.draw.rect(surf, col, rect, border_radius=6)
+            pygame.draw.rect(surf, ui.BORDER, rect, 1, border_radius=6)
+            ui.text(surf, name, rect.center, 14, anchor="center", bold=True)
+            ui.text(surf, binds.name(slot), (rect.x + 3, rect.y), 11, ui.GOLD, bold=True)
+        self.btn_swap.draw(surf)

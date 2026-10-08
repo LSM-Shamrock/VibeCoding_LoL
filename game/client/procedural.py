@@ -141,6 +141,22 @@ def build_minion_weapon(mtype, team):
     return b, MINION_WEAPON_PIVOT[mtype]
 
 
+# ------------------------------------------------------------------ 부쉬
+def build_bush(rx, rz, seed=0):
+    """타원 범위를 채우는 풀 덤불. 원점이 부쉬 중심."""
+    rng = random.Random(seed)
+    b = MeshBuilder()
+    dark, light = (0.16, 0.42, 0.3), (0.32, 0.66, 0.42)
+    n = int(rx * rz * 9)
+    for _ in range(n):
+        a = rng.uniform(0, math.tau)
+        k = math.sqrt(rng.uniform(0, 1))
+        x, z = math.cos(a) * rx * k * 0.95, math.sin(a) * rz * k * 0.95
+        h = rng.uniform(0.75, 1.25) * (1.0 - 0.25 * k)
+        b.cone((x, 0, z), rng.uniform(0.22, 0.38), h, _mix(dark, light, rng.uniform(0, 1)), seg=5)
+    return b
+
+
 # ------------------------------------------------------------------ 구조물
 def build_turret(team):
     tc = TEAM_COLORS[team]
