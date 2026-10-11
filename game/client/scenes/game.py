@@ -74,6 +74,8 @@ SLOTS = ("Q", "W", "E", "R")
 HOVER_RADIUS = {"champion": 58, "minion": 38}
 
 HUD_RECT = pygame.Rect(300, 606, 680, 108)
+MM_BG = (14, 11, 8, 240)                # 미니맵 바탕: 길 바깥쪽과 같은 어두운 색
+MM_PAD = 2                              # 미니맵 좌우 여백 (px)
 MINIMAP_X = 70.0                        # 미니맵이 덮는 x 범위 (±)
 INV_COLS = 4                            # 인벤토리 4칸 x 2줄
 CHAT_X, CHAT_Y, CHAT_W = 12, 572, 440     # 채팅 입력칸 (왼쪽 아래, 로그는 그 위로 쌓임)
@@ -397,6 +399,8 @@ class GameScene(Scene):
         xs = mapdata.VIS_X0 + (np.arange(self.vis_nx) + 0.5) * mapdata.VIS_CELL
         zs = mapdata.VIS_Z0 + (np.arange(self.vis_nz) + 0.5) * mapdata.VIS_CELL
         self.vis_x, self.vis_z = np.meshgrid(xs, zs)
+        hw = np.array([mapdata.half_width(x) + 0.5 for x in xs])
+        self.vis_walk = (np.abs(zs)[:, None] <= hw[None, :]).astype(np.float32)      # 길 안쪽 칸 (미니맵 안개를 여기만)
         # 부쉬는 가장자리가 부드럽게 넘어가도록 칸마다 "부쉬 안쪽 정도"(0~1)를 미리 계산한다
         nb = len(mapdata.BUSHES)
         bsoft = np.zeros((nb,) + self.vis_x.shape, dtype=np.float32)
@@ -464,7 +468,7 @@ class GameScene(Scene):
         self.vis_tex.write(np.rint(self.vis * 255).astype(np.uint8).tobytes())
         # 미니맵용 안개 (안 보이는 곳을 어둡게)
         fog = np.zeros((self.vis_nx, self.vis_nz, 4), dtype=np.uint8)
-        fog[..., 3] = ((1.0 - self.vis.T) * 150).astype(np.uint8)
+        fog[..., 3] = ((1.0 - self.vis.T) * 150 * self.vis_walk.T).astype(np.uint8)       # 길 밖은 바탕색 그대로
         surf = pygame.image.frombuffer(np.ascontiguousarray(fog.transpose(1, 0, 2)).tobytes(),
                                        (self.vis_nx, self.vis_nz), "RGBA")
         x0, z0 = self.world_to_minimap(mapdata.VIS_X0, mapdata.VIS_Z0)
@@ -2609,20 +2613,20 @@ class GameScene(Scene):
 
     # ---- 미니맵
     def world_to_minimap(self, x, z):
-        mx = MINIMAP.x + 8 + (x + MINIMAP_X) / (2 * MINIMAP_X) * (MINIMAP.width - 16)
-        my = MINIMAP.centery + z * (MINIMAP.width - 16) / (2 * MINIMAP_X)      # 가로·세로 같은 축척 (비율 왜곡 없음)
+        mx = MINIMAP.x + MM_PAD + (x + MINIMAP_X) / (2 * MINIMAP_X) * (MINIMAP.width - 2 * MM_PAD)
+        my = MINIMAP.centery + z * (MINIMAP.width - 2 * MM_PAD) / (2 * MINIMAP_X)      # 가로·세로 같은 축척 (비율 왜곡 없음)
         return int(mx), int(my)
 
     def minimap_ellipse(self, x, z, radius):
         """월드의 원(반지름 radius)을 미니맵에 그릴 타원 영역으로. 미니맵은 가로·세로 축척이 달라 타원이 된다."""
         cx, cy = self.world_to_minimap(x, z)
-        rx = radius / (2 * MINIMAP_X) * (MINIMAP.width - 16)
+        rx = radius / (2 * MINIMAP_X) * (MINIMAP.width - 2 * MM_PAD)
         ry = rx
         return pygame.Rect(int(cx - rx), int(cy - ry), max(2, int(rx * 2)), max(2, int(ry * 2)))
 
     def minimap_to_world(self, sx, sy):
-        x = (sx - MINIMAP.x - 8) / (MINIMAP.width - 16) * (2 * MINIMAP_X) - MINIMAP_X
-        z = (sy - MINIMAP.centery) * (2 * MINIMAP_X) / (MINIMAP.width - 16)
+        x = (sx - MINIMAP.x - MM_PAD) / (MINIMAP.width - 2 * MM_PAD) * (2 * MINIMAP_X) - MINIMAP_X
+        z = (sy - MINIMAP.centery) * (2 * MINIMAP_X) / (MINIMAP.width - 2 * MM_PAD)
         return mapdata.clamp_to_map(x, z)
 
     def portrait(self, surf, rect, cid, level, dead, ring):
@@ -2641,7 +2645,7 @@ class GameScene(Scene):
         윗줄=죽은 적 아이콘(흑백+부활 초). 죽은 아군은 흑백+부활 초."""
         if not self.champ_info or not self.me:
             return
-        SZ, GAP = 40, 6
+        SZ, GAP = 52, 7
         allies = [cid for cid, i in self.champ_info.items() if i["tm"] == self.my_team]
         enemies = [cid for cid, i in self.champ_info.items() if i["tm"] != self.my_team]
 
@@ -2675,14 +2679,14 @@ class GameScene(Scene):
                 r = pygame.Rect(x0 + i * (SZ + GAP), y0, SZ, SZ)
                 self.portrait(surf, r, cid, lv, dead, ui.BLUE_C if cid != self.my_id else (255, 220, 110))
                 if dead:
-                    ui.text(surf, f"{rt:.0f}", r.center, 20, (255, 255, 255), anchor="center", bold=True)
+                    ui.text(surf, f"{rt:.0f}", r.center, 24, (255, 255, 255), anchor="center", bold=True)
                 elif d:
                     ratio = d["hp"] / max(1, d["mhp"])
                     col = (80, 210, 100) if ratio > 0.35 else (240, 190, 70) if ratio > 0.15 else (240, 80, 70)
-                    pygame.draw.rect(surf, (10, 14, 20), (r.x, r.bottom + 2, SZ, 11))
-                    pygame.draw.rect(surf, col, (r.x + 1, r.bottom + 3, int((SZ - 2) * max(0, min(1, ratio))), 5))
+                    pygame.draw.rect(surf, (10, 14, 20), (r.x, r.bottom + 2, SZ, 12))
+                    pygame.draw.rect(surf, col, (r.x + 1, r.bottom + 3, int((SZ - 2) * max(0, min(1, ratio))), 6))
                     mr = d["mp"] / max(1, d["mmp"])
-                    pygame.draw.rect(surf, (70, 130, 255), (r.x + 1, r.bottom + 9, int((SZ - 2) * max(0, min(1, mr))), 3))
+                    pygame.draw.rect(surf, (70, 130, 255), (r.x + 1, r.bottom + 10, int((SZ - 2) * max(0, min(1, mr))), 3))
         if dead_enemies:
             n = len(dead_enemies)
             x0 = right - n * SZ - (n - 1) * GAP
@@ -2690,10 +2694,10 @@ class GameScene(Scene):
             for i, (cid, (e, d, lv, dead, rt)) in enumerate(dead_enemies):
                 r = pygame.Rect(x0 + i * (SZ + GAP), y0, SZ, SZ)
                 self.portrait(surf, r, cid, lv, True, ui.RED_C)
-                ui.text(surf, f"{rt:.0f}", r.center, 20, (255, 255, 255), anchor="center", bold=True)
+                ui.text(surf, f"{rt:.0f}", r.center, 24, (255, 255, 255), anchor="center", bold=True)
 
     def draw_minimap(self, surf):
-        ui.panel(surf, MINIMAP, (22, 17, 14, 235), ui.BORDER, radius=4)
+        ui.panel(surf, MINIMAP, MM_BG, ui.BORDER, radius=4)
         pts_top, pts_bot = [], []
         x = -mapdata.LANE_END
         while x <= mapdata.LANE_END + 1e-6:
@@ -2769,9 +2773,10 @@ class GameScene(Scene):
 
     # ---- 상점
     def shop_panel(self):
-        return pygame.Rect(WIDTH // 2 - 380, 90, 760, 400)
+        return pygame.Rect(WIDTH // 2 - 380, 90, 760, 410)
 
     def draw_shop(self, surf):
+        """롤식 상점: 왼쪽에 1단계(기본) / 2단계(상위) 아이템, 오른쪽에 고른 아이템의 재료 트리."""
         me = self.me
         p = self.shop_panel()
         ui.panel(surf, p, (12, 18, 30, 245), ui.BORDER)
@@ -2783,22 +2788,93 @@ class GameScene(Scene):
             ui.text(surf, f"{me['g']} G", (p.right - 20, p.y + 16), 22, ui.GOLD, anchor="topright", bold=True)
         self.shop_rects = []
         mouse = ui.mouse_pos()
-        cols = 3
-        cw = (p.width - 40) // cols
-        for i, (iid, it) in enumerate(gamedata.items().items()):
-            x = p.x + 20 + (i % cols) * cw
-            y = p.y + 60 + (i // cols) * 66
-            rect = pygame.Rect(x, y, cw - 10, 60)
-            affordable = me and me["g"] >= it["cost"] and len(me["it"]) < INVENTORY_SLOTS
-            hover = rect.collidepoint(mouse)
-            ui.panel(surf, rect, (40, 60, 95, 240) if hover else (22, 32, 50, 230),
-                     ui.HIGHLIGHT if hover else ui.BORDER, radius=5)
-            draw_item(surf, iid, (x + 8, y + 10, 40, 40))
-            ui.text(surf, it["name"], (x + 58, y + 6), 15, ui.TEXT if affordable else ui.TEXT_DIM, bold=True)
-            ui.text(surf, f"{it['cost']} G", (rect.right - 8, y + 6), 14, ui.GOLD if affordable else (150, 110, 90),
-                    anchor="topright")
-            ui.text_block(surf, item_stat_text(it), (x + 58, y + 28), cw - 80, 12, ui.TEXT_DIM, 1)
-            self.shop_rects.append((iid, rect))
+        its = gamedata.items()
+        owned = list(me["it"]) if me else []
+        tier1 = [i for i, it in its.items() if it.get("tier", 1) == 1]
+        tier2 = [i for i, it in its.items() if it.get("tier", 1) >= 2]
+        cw, ch, gap, cols = 150, 50, 6, 3
+        left = p.x + 16
+        hovered = None
+        y = p.y + 58
+        for title, ids in (("1단계 · 기본 아이템", tier1), ("2단계 · 상위 아이템  (재료를 가지고 있으면 그만큼 싸집니다)", tier2)):
+            ui.text(surf, title, (left, y), 13, ui.TEXT_DIM)
+            y += 22
+            for k, iid in enumerate(ids):
+                it = its[iid]
+                rect = pygame.Rect(left + (k % cols) * (cw + gap), y + (k // cols) * (ch + gap), cw, ch)
+                used, price = gamedata.buy_plan(owned, iid)
+                free = len(owned) - len(used) < INVENTORY_SLOTS
+                affordable = bool(me) and me["g"] >= price and free
+                hover = rect.collidepoint(mouse)
+                if hover:
+                    hovered = iid
+                ui.panel(surf, rect, (40, 60, 95, 240) if hover else (22, 32, 50, 230),
+                         ui.HIGHLIGHT if hover else ui.BORDER, radius=5)
+                draw_item(surf, iid, (rect.x + 6, rect.y + 7, 36, 36))
+                ui.text(surf, it["name"], (rect.x + 48, rect.y + 7), 13, ui.TEXT if affordable else ui.TEXT_DIM, bold=True)
+                pc = ui.GOLD if affordable else (150, 110, 90)
+                ui.text(surf, f"{price} G", (rect.x + 48, rect.y + 28), 13, pc)
+                if used:
+                    ui.text(surf, f"재료 {len(used)}/{len(it['from'])}", (rect.right - 6, rect.y + 28), 11, (120, 220, 140),
+                            anchor="topright", shadow=False)
+                self.shop_rects.append((iid, rect))
+            y += ((len(ids) + cols - 1) // cols) * (ch + gap) + 8
+        if hovered:
+            self.shop_sel = hovered
+        sel = getattr(self, "shop_sel", None) or tier2[0]
+        self.draw_shop_tree(surf, pygame.Rect(left + cols * (cw + gap) + 8, p.y + 52, p.right - (left + cols * (cw + gap) + 8) - 14,
+                                              p.height - 66), sel, owned)
+
+    def draw_shop_tree(self, surf, area, iid, owned):
+        """고른 아이템: 능력치, 필요한 재료(가진 건 초록 체크), 이 아이템이 재료로 들어가는 상위 아이템."""
+        its = gamedata.items()
+        it = its[iid]
+        ui.panel(surf, area, (16, 24, 40, 235), (60, 75, 105), radius=6)
+        x, y = area.x + 12, area.y + 12
+        draw_item(surf, iid, (x, y, 44, 44))
+        ui.text(surf, it["name"], (x + 54, y + 2), 16, ui.GOLD, bold=True)
+        used, price = gamedata.buy_plan(owned, iid)
+        ui.text(surf, f"총 {it['cost']} G", (x + 54, y + 26), 13, ui.TEXT_DIM)
+        y += 54
+        for line in ui.wrap(item_stat_text(it), 13, area.width - 24):
+            ui.text(surf, line, (x, y), 13, ui.TEXT)
+            y += 18
+        y += 8
+        comps = it.get("from", [])
+        if comps:
+            ui.text(surf, "필요한 재료", (x, y), 13, ui.TEXT_DIM)
+            y += 22
+            left = list(owned)
+            slot_w = 48
+            for k, c in enumerate(comps):
+                have = c in left
+                if have:
+                    left.remove(c)
+                r = pygame.Rect(x + k * (slot_w + 6), y, slot_w, slot_w)
+                pygame.draw.rect(surf, (28, 42, 30) if have else (30, 30, 40), r.inflate(6, 6), border_radius=5)
+                pygame.draw.rect(surf, (90, 210, 110) if have else (80, 85, 105), r.inflate(6, 6), 1, border_radius=5)
+                draw_item(surf, c, r.inflate(-4, -4))
+                if not have:
+                    shade = pygame.Surface(r.size, pygame.SRCALPHA)
+                    shade.fill((0, 0, 0, 120))
+                    surf.blit(shade, r.topleft)
+                ui.text(surf, f"{its[c]['cost']}", (r.centerx, r.bottom + 6), 11, ui.GOLD if not have else (120, 220, 140),
+                        anchor="midtop", shadow=False)
+            y += slot_w + 26
+            ui.text(surf, f"조합 비용 {it['cost'] - sum(its[c]['cost'] for c in comps)} G", (x, y), 13, ui.TEXT_DIM)
+            y += 20
+            ui.text(surf, f"지금 사려면 {price} G", (x, y), 15, ui.GOLD, bold=True)
+        else:
+            ups = gamedata.upgrades_of(iid)
+            ui.text(surf, "만들 수 있는 상위 아이템", (x, y), 13, ui.TEXT_DIM)
+            y += 22
+            for u in ups:
+                r = pygame.Rect(x, y, 28, 28)
+                draw_item(surf, u, r)
+                ui.text(surf, its[u]["name"], (x + 36, y + 6), 13, ui.TEXT)
+                y += 32
+            if not ups:
+                ui.text(surf, "없음", (x, y), 13, ui.TEXT_DIM)
 
     # ---- 점수판
     def draw_scoreboard(self, surf):

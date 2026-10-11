@@ -86,10 +86,20 @@ class BotBrain:
             item = gamedata.items().get(iid)
             if item is None:
                 continue
-            if c.gold >= item["cost"]:
+            used, price = gamedata.buy_plan(c.items, iid)
+            if c.gold >= price:
                 sim.buy(c, iid)
-            else:
+                continue
+            # 모자라면 이 아이템의 재료 중 빠진 것부터 산다 (롤처럼 하위 템 먼저)
+            left = list(used)
+            for comp in item.get("from", []):
+                if comp in left:
+                    left.remove(comp)
+                    continue
+                if c.gold >= gamedata.items()[comp]["cost"]:
+                    sim.buy(c, comp)
                 break
+            break
 
     # ------------------------------------------------------------------ 판단 보조
     def enemy_turrets(self, sim):

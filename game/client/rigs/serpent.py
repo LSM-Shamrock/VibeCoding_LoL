@@ -46,6 +46,9 @@ SLAM_REACH = 3.6                # 내려찍기 때 목이 뻗을 수 있는 최�
 EXT_SPAN = 22.0                 # 목을 앞으로 뻗을 때 머리에서 이만큼 뒤까지 끌려온다
 WAVE_RISE = 0.3                 # 마디 하나가 잠기는 데 걸리는 시간
 ATTACK_TIME = 0.34
+HEAVY_POS = 7.0                 # 머리가 이동 목표를 따라가는 속도 (낮을수록 묵직하게 끌려간다)
+HEAVY_TURN = 6.0                # 머리 방향이 바뀌는 속도
+MAX_TURN = 4.5                  # 머리가 돌 수 있는 최대 각속도 (rad/s)
 FWD = 4.0                       # 모델을 앞(머리 쪽)으로 당기는 거리 (보스 단위): 발밑 원 그림자가 모델보다 살짝 뒤에 오게
 
 _SCALE = _S(SC)
@@ -82,7 +85,7 @@ LEAN = math.tan(math.radians(9))   # 세운 몸이 뒤로 기울어진 정도
 GND = 1.3                       # 땅에 누운 몸 중심의 대략적인 높이
 WAVE_A = 5.6                    # 누운 몸의 S자 폭 (옆으로 벌어지는 최대 거리)
 WAVE_K = 0.72                   # S자 물결이 촘촘한 정도 (rad / 거리)
-WAVE_HOLD = 2.0                 # 꺾이는 곳에서 이만큼 뒤까지는 S자 없이 빳빳하게 곧다
+WAVE_HOLD = 5.0                 # 꺾이는 곳에서 이만큼 뒤까지는 S자 없이 빳빳하게 곧다
 WAVE_RAMP = 5.0                 # 꺾이는 곳에서 이만큼 지나야 S자 폭이 최대가 된다
 WAVE_SQ = 1.6                   # 물결 끝을 납작하게 하는 정도
 SWIM_SPD = 3.2                  # 이동 중 S자 물결이 꼬리 쪽으로 흘러가는 속도 (rad/s)
@@ -1059,7 +1062,7 @@ class SerpentAnim:
             self.tgt['ext'] = self.slam_reach
         for k in self.cur:
             self.cur[k] += (self.tgt[k] - self.cur[k]) * (1 - math.exp(-self.rate[k] * dt))
-        self.byaw += _wrap(self.yaw - self.byaw) * (1 - math.exp(-3.5 * dt))
+        self.byaw += _wrap(self.yaw - self.byaw) * (1 - math.exp(-2.2 * dt))
         self.lift_cur = max(HEAD_REST, self.cur['lift'])
         self.jaw_cur = self.cur['jaw']
         self.hood_cur = self.cur['hood']
@@ -1087,17 +1090,22 @@ class SerpentAnim:
             self.layout_line(x, z, self.yaw)
         else:
             k = 1 - math.exp(-10 * dt)
-            vx, vz = (mx / dt, mz / dt) if dt > 1e-6 else (0.0, 0.0)
+            # 머리가 목표 위치를 바로 따라가지 않고 묵직하게 끌려가 방향을 꺾을 때 몸이 넓게 휘어진다
+            ks = 1 - math.exp(-HEAVY_POS * dt)
+            sx_, sz_ = mx * ks, mz * ks
+            vx, vz = (sx_ / dt, sz_ / dt) if dt > 1e-6 else (0.0, 0.0)
             self.vel[0] += (vx - self.vel[0]) * k
             self.vel[1] += (vz - self.vel[1]) * k
-            self.px, self.pz = x, z
+            self.px, self.pz = self.px + sx_, self.pz + sz_
         self.speed = math.hypot(self.vel[0], self.vel[1])
         if self.slam_tgt is not None and self.seq and self.t < self.seq_end and any(n in ('rear', 'slam') for e_, n in self.seq if self.t < e_):
             tdx, tdz = self.slam_tgt[0] - self.px, self.slam_tgt[1] - self.pz
             if math.hypot(tdx, tdz) > 0.5:
                 face = math.atan2(tdx, tdz)                     # 시전 중에는 목표 쪽을 보고, 목표까지의 거리만큼 뻗는다
                 self.slam_reach = min(math.hypot(tdx, tdz), SLAM_REACH / SC)
-        self.yaw += _wrap(face - self.yaw) * (1 - math.exp(-14 * dt))
+        turn = _wrap(face - self.yaw) * (1 - math.exp(-HEAVY_TURN * dt))
+        cap = MAX_TURN * dt                                  # 아무리 휙휙 돌려도 이 속도 이상으로는 못 돈다
+        self.yaw += max(-cap, min(cap, turn))
 
     # ------------------------------------------------------------ 그리기
     def draw(self, r, tint=(1, 1, 1, 1), emis=(0, 0, 0)):

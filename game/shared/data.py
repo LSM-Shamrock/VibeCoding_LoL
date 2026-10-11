@@ -36,6 +36,27 @@ def default_champion_id():
     return next(iter(champions()))
 
 
+def buy_plan(owned, iid):
+    """롤식 아이템 트리: iid(2단계)를 살 때 가진 하위 아이템(from)을 재료로 써서 값을 깎는다.
+    반환: (재료로 쓰이는 아이템 id 목록, 지불할 가격). 1단계 아이템은 재료 없이 정가."""
+    its = items()
+    item = its[iid]
+    left = list(owned)
+    used = []
+    price = item["cost"]
+    for comp in item.get("from", []):
+        if comp in left:
+            left.remove(comp)
+            used.append(comp)
+            price -= its[comp]["cost"]
+    return used, price
+
+
+def upgrades_of(iid):
+    """iid 를 재료로 쓰는 2단계 아이템 id 목록."""
+    return [i for i, it in items().items() if iid in it.get("from", [])]
+
+
 def items():
     """{item_id: data} — 입력 순서를 유지한다."""
     global _items

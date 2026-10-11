@@ -640,9 +640,12 @@ class Simulation:
         item = gamedata.items().get(iid)
         if item is None or not self.can_shop(c):
             return
-        if len(c.items) >= INVENTORY_SLOTS or c.gold < item["cost"]:
+        used, price = gamedata.buy_plan(c.items, iid)          # 가진 하위 아이템은 재료로 쓰여 값이 깎인다
+        if len(c.items) - len(used) >= INVENTORY_SLOTS or c.gold < price:
             return
-        c.gold -= item["cost"]
+        for comp in used:
+            c.items.remove(comp)
+        c.gold -= price
         c.items.append(iid)
         c.recompute_stats(self.time)
 
