@@ -3,6 +3,7 @@ import math
 
 from ..shared import data as gamedata
 from ..shared.constants import PLATE_GOLD, START_GOLD, START_LEVEL, TURRET_PLATES
+from ..shared.spells import DEFAULT_SPELLS, valid_pair
 
 
 class Unit:
@@ -24,6 +25,17 @@ class Unit:
         self.slows = []             # [(만료 시각, 둔화율)]
         self.stun_until = 0.0
         self.root_until = 0.0
+        self.silence_until = 0.0    # 침묵: 스킬 시전 불가
+        self.airborne_until = 0.0   # 에어본 (기절과 함께 걸리며 표시용)
+        self.cc_immune_until = 0.0  # 군중 제어 면역
+        self.untarget_until = 0.0   # 대상 지정 불가 (줄 위를 걷는 동안 등)
+        self.ghost_until = 0.0      # 망령 상태: 구조물을 통과
+        self.revealed_until = 0.0   # 부쉬·안개와 상관없이 적에게 위치가 드러남
+        self.marks = {}             # {표식 이름: (만료 시각, 건 챔피언 id)}
+        self.kb = None              # 넉백 중: {"dx","dz","left","speed","stun"}
+        self.shields = []           # [{"amount","until","on_break"}] 오래된 것부터 소모
+        self.caged_until = 0.0      # 대종에 갇힘
+        self.cage_id = None
 
     # ---- 상태이상 ----
     def stunned(self, t):
@@ -32,15 +44,66 @@ class Unit:
     def rooted(self, t):
         return t < self.root_until or t < self.stun_until
 
+    def silenced(self, t):
+        return t < self.silence_until
+
+    def airborne(self, t):
+        return t < self.airborne_until
+
+    def cc_immune(self, t):
+        return t < self.cc_immune_until
+
+    def untargetable(self, t):
+        return t < self.untarget_until
+
+    def ghost(self, t):
+        return t < self.ghost_until
+
     def slow_amount(self, t):
         self.slows = [s for s in self.slows if s[0] > t]
         return max((s[1] for s in self.slows), default=0.0)
 
     def apply_slow(self, t, amount, duration):
+        if self.cc_immune(t):
+            return
         self.slows.append((t + duration, amount))
 
-    def apply_stun(self, t, duration):
+    def apply_stun(self, t, duration, airborne=False):
+        if self.cc_immune(t):
+            return False
         self.stun_until = max(self.stun_until, t + duration)
+        if airborne:
+            self.airborne_until = max(self.airborne_until, t + duration)
+        return True
+
+    def apply_root(self, t, duration):
+        if self.cc_immune(t):
+            return False
+        self.root_until = max(self.root_until, t + duration)
+        return True
+
+    def apply_silence(self, t, duration):
+        if self.cc_immune(t):
+            return False
+        self.silence_until = max(self.silence_until, t + duration)
+        return True
+
+    def cleanse(self, t):
+        """기절·속박·침묵·둔화·에어본·넉백을 모두 푼다."""
+        self.stun_until = self.root_until = self.silence_until = self.airborne_until = 0.0
+        self.slows = []
+        self.kb = None
+
+    def shield_total(self, t):
+        self.shields = [s for s in self.shields if s["until"] > t and s["amount"] > 0.01]
+        return sum(s["amount"] for s in self.shields)
+
+    def mark_of(self, name, t, owner_id=None):
+        """유효한 표식이 있으면 (만료, 건 챔피언 id), 없으면 None."""
+        m = self.marks.get(name)
+        if m and m[0] > t and (owner_id is None or m[1] == owner_id):
+            return m
+        return None
 
     def dist_to(self, other):
         return math.hypot(other.x - self.x, other.z - self.z)
@@ -52,7 +115,7 @@ class Unit:
 class Champion(Unit):
     kind = "champion"
 
-    def __init__(self, uid, team, x, z, member_key, name, champ_id, is_bot):
+    def __init__(self, uid, team, x, z, member_key, name, champ_id, is_bot, spells=None):
         cdata = gamedata.champion(champ_id)
         super().__init__(uid, team, x, z, cdata["stats"].get("radius", 0.55))
         self.member_key = member_key
@@ -60,6 +123,7 @@ class Champion(Unit):
         self.champ_id = champ_id
         self.data = cdata
         self.is_bot = is_bot
+        self.spells = list(spells) if valid_pair(spells) else list(DEFAULT_SPELLS)    # [D 칸 주문, F 칸 주문]
 
         self.level = START_LEVEL
         self.xp = 0.0
@@ -70,8 +134,21 @@ class Champion(Unit):
         self.ready_at = {"Q": 0.0, "W": 0.0, "E": 0.0, "R": 0.0, "D": 0.0, "F": 0.0}
 
         self.buffs = []              # [{"until", "attack_speed_pct", "move_speed_pct"}]
-        self.empower = None          # {"until", "magic"}
+        self.empower = None          # {"until", "dmg", "dtype"} 다음 기본 공격 강화
         self.attack_count = 0
+
+        # 스킬이 거는 상태
+        self.counter = None          # 반격의 방어막 {"until","ratio","life"}
+        self.echo = None             # 메아리 {"until","pct","time","armor_per_mark"}
+        self.deferred = []           # 메아리로 나눠 받는 피해 [{"left","rate","src"}]
+        self.vamp = None             # 흡혈 {"until","pct"}
+        self.undying_until = 0.0     # 체력이 1 밑으로 떨어지지 않음
+        self.pierce_until = 0.0      # 기본 공격이 뒤의 적까지 관통
+        self.q_hit_until = 0.0       # 외줄 걸기 적중 후 삼도 던지기가 즉발인 시간
+        self.bush_until = 0.0        # 부쉬 안이거나 막 나온 뒤 사거리 보너스가 유지되는 시간
+        self.anchor_id = None        # 설치한 줄 말뚝
+        self.rope = None             # 공중 외줄 위에 있을 때 {"x0","z0","x1","z1","len","s","until","ab","rank"}
+        self.bonus_armor = 0.0       # 메아리의 표식 비례 방어력
 
         self.dead = False
         self.respawn_at = 0.0
@@ -87,6 +164,8 @@ class Champion(Unit):
         self.dash = None             # {"x","z","speed","follow","on_end"}
         self.cast_anim_until = 0.0
         self.mark = None             # (표식 대상 id, 만료 시각)
+        self.exhaust_until = 0.0     # 탈진: 이 시각까지 주는 피해가 줄고 느려짐
+        self.ignite = None           # 점화: {"until","next","tick","src"} 지속 고정 피해, 받는 회복 감소
         self.recall_at = None        # 귀환 완료 시각 (정신집중 중일 때만)
         self.last_hit_at = -99.0     # 마지막으로 피해를 받은 시각 (봇의 귀환 판단용)
 
@@ -118,7 +197,7 @@ class Champion(Unit):
             "bonus_ad": item_stats.get("ad", 0),
             "ad": base_ad + item_stats.get("ad", 0),
             "ap": item_stats.get("ap", 0),
-            "armor": s["armor"] + s["armor_per_level"] * lv + item_stats.get("armor", 0),
+            "armor": s["armor"] + s["armor_per_level"] * lv + item_stats.get("armor", 0) + self.bonus_armor,
             "mr": s["mr"] + s["mr_per_level"] * lv + item_stats.get("mr", 0),
             "attack_speed": min(2.5, s["attack_speed"] * (1 + s["attack_speed_per_level"] * lv
                                                           + item_stats.get("attack_speed", 0) + buff_as)),
@@ -130,6 +209,12 @@ class Champion(Unit):
         ms = (s["move_speed"] + item_stats.get("move_speed", 0)) * (1 + buff_ms)
         st["move_speed"] = ms * (1 - self.slow_amount(t))
         self.stats = st
+        # 툴팁용 "기본" 능력치 (레벨 성장분까지 포함, 아이템·버프는 제외 = 롤의 기본+추가 표시)
+        self.base_stats = {
+            "ad": base_ad, "ap": 0.0, "ar": s["armor"] + s["armor_per_level"] * lv,
+            "mr": s["mr"] + s["mr_per_level"] * lv,
+            "aspd": s["attack_speed"] * (1 + s["attack_speed_per_level"] * lv),
+            "ms": s["move_speed"] * 100, "ah": 0.0, "cr": 0.0}
         self.max_hp = st["max_hp"]
         self.max_mana = st["max_mana"]
         self.armor = st["armor"]
@@ -145,7 +230,8 @@ class Champion(Unit):
 
     def cooldown_of(self, slot):
         ab = self.data["abilities"][slot]
-        cd = ab["cooldown"][max(0, self.ranks[slot] - 1)]
+        cds = ab["cooldown"]
+        cd = cds[max(0, min(len(cds) - 1, self.ranks[slot] - 1))]
         return cd * 100.0 / (100.0 + self.stats["ability_haste"])
 
     def max_rank(self, slot):
@@ -166,9 +252,10 @@ MINION_TYPES = {
     "caster": (300, 9.0, 5.0, 0.67, 3.25, 0.40, 14, 30, True),
     "cannon": (920, 15.8, 3.0, 1.00, 3.25, 0.60, 60, 93, True),
     "super":  (1600, 41, 1.7, 0.85, 3.25, 0.75, 40, 97, False),
+    "spiderling": (80, 0, 3.2, 1.0, 3.3, 0.34, 0, 0, True),      # 거미 여왕 E: 고치에서 나오는 새끼 거미 (거미 여왕과 같은 거미줄 평타)
 }
-MINION_CODES = {"melee": 0, "caster": 1, "cannon": 2, "super": 3}
-TURRET_MINION_DMG = {"melee": 0.45, "caster": 0.70, "cannon": 0.14, "super": 0.07}
+MINION_CODES = {"melee": 0, "caster": 1, "cannon": 2, "super": 3, "spiderling": 4}
+TURRET_MINION_DMG = {"melee": 0.45, "caster": 0.70, "cannon": 0.14, "super": 0.07, "spiderling": 0.5}
 
 
 class Minion(Unit):
@@ -233,6 +320,10 @@ class Projectile:
         self.remaining = 0.0
         self.width = 0.0
         self.on_hit = None            # 콜백 f(sim, target)
+        self.on_miss = None           # 아무도 맞히지 못하고 사라질 때 f(sim, projectile)
+        self.pierce = False           # True 면 맞은 뒤에도 계속 날아가 경로의 모든 적을 맞힌다
+        self.hit_ids = set()
+        self.traveled = 0.0
 
 
 class GroundEffect:
@@ -246,6 +337,47 @@ class GroundEffect:
         self.trigger_at = trigger_at
         self.style = style
         self.on_trigger = on_trigger
+
+
+class Anchor(Unit):
+    """줄 말뚝: 적도 볼 수 있고, 기본 공격 3번이면 부서진다."""
+    kind = "anchor"
+
+    def __init__(self, uid, team, owner, x, z, until):
+        super().__init__(uid, team, x, z, 0.5)
+        self.owner = owner
+        self.until = until
+        self.max_hp = self.hp = 3.0
+
+
+class Cocoon(Anchor):
+    """새끼 거미 고치 (거미 여왕 E): 적도 볼 수 있고, 평타든 스킬이든 체력만큼 맞으면 깨진다. 시간이 지나면 새끼 거미가 부화한다."""
+    kind = "anchor"
+    cocoon = True
+
+    def __init__(self, uid, team, owner, x, z, hatch_at, hp=100.0):
+        super().__init__(uid, team, owner, x, z, hatch_at)
+        self.max_hp = self.hp = float(hp)
+        self.born = 0.0
+        self.baby = {}
+
+
+class Zone:
+    """일정 시간 남아 있는 장판 (성역, 대자연의 정원, 사냥 덫, 대종 감옥)."""
+
+    def __init__(self, zid, kind, team, owner, x, z, radius, until, style, hidden=False, data=None):
+        self.id = zid
+        self.kind = kind               # aura / trap / cage
+        self.team = team
+        self.owner = owner
+        self.x = x
+        self.z = z
+        self.radius = radius
+        self.born = 0.0
+        self.until = until
+        self.style = style
+        self.hidden = hidden           # True 면 아군에게만 보인다 (덫)
+        self.data = data or {}
 
 
 class Relic:

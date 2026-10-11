@@ -49,7 +49,10 @@ class LobbyScene(Scene):
                 if rect.collidepoint(e.pos):
                     # 같은 방을 빠르게 두 번 클릭하면 입장
                     if self.selected == rid and now - self.last_click < 400:
+                        self.app.audio.play("ui_confirm")
                         self.join(rid)
+                    elif self.selected != rid:
+                        self.app.audio.play("ui_select")
                     self.selected = rid
                     self.last_click = now
 

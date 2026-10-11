@@ -13,7 +13,9 @@ BASE_HALF_WIDTH = 11.5   # 본진 구간 절반 폭
 BASE_START = 40.0        # |x| 가 이 이상이면 본진 구간으로 넓어짐
 BASE_BLEND = 6.0
 
-FOUNTAIN_X = 60.0
+FOUNTAIN_X = 62.0
+PILLAR_RING = 6.6        # 우물 제단 기둥이 놓인 반지름
+PILLAR_RADIUS = 0.45     # 기둥 충돌 반지름 (포탑처럼 길을 막는다)
 
 
 def team_dir(team):
@@ -23,6 +25,19 @@ def team_dir(team):
 
 def fountain_pos(team):
     return (-FOUNTAIN_X if team == BLUE else FOUNTAIN_X, 0.0)
+
+
+def fountain_pillars(team):
+    """우물 제단 기둥 위치. 8개 중 앞쪽(맵 중앙 방향) 3개와 뒤쪽 1개를 뺀 4개만 남긴다."""
+    fx, fz = fountain_pos(team)
+    drop = {0, 1, 7, 4} if team == BLUE else {4, 3, 5, 0}
+    out = []
+    for k in range(8):
+        if k in drop:
+            continue
+        a = k / 8 * math.tau
+        out.append((fx + math.cos(a) * PILLAR_RING, fz + math.sin(a) * PILLAR_RING))
+    return out
 
 
 def half_width(x):
@@ -88,7 +103,7 @@ def bush_at(x, z):
 # 시야 격자 (클라이언트 전장의 안개 표시용): 맵을 덮는 범위와 칸 크기
 VIS_X0, VIS_X1 = -70.0, 70.0
 VIS_Z0, VIS_Z1 = -13.0, 13.0
-VIS_CELL = 0.5
+VIS_CELL = 0.25
 
 
 def spawn_points(team, count):

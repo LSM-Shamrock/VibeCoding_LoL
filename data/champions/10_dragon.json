@@ -1,0 +1,237 @@
+{
+  "id": "dragon",
+  "name": "용",
+  "title": "겁화의 용",
+  "role": "마법사 · 광역 딜러",
+  "color": [
+    200,
+    60,
+    30
+  ],
+  "model": {
+    "rig": "dragon",
+    "scale": 1.0
+  },
+  "skill_order": [
+    "R",
+    "Q",
+    "W",
+    "E"
+  ],
+  "bot_build": [
+    "swift_boots",
+    "ice_reaper",
+    "blood_fang",
+    "guardian_mail",
+    "frost_edge"
+  ],
+  "stats": {
+    "hp": 720,
+    "hp_per_level": 108,
+    "mana": 400,
+    "mana_per_level": 44,
+    "hp_regen": 6.5,
+    "hp_regen_per_level": 0.75,
+    "mana_regen": 8.0,
+    "mana_regen_per_level": 0.8,
+    "ad": 60,
+    "ad_per_level": 3.4,
+    "armor": 34,
+    "armor_per_level": 4.2,
+    "mr": 32,
+    "mr_per_level": 1.3,
+    "attack_speed": 0.68,
+    "attack_speed_per_level": 0.024,
+    "attack_range": 4.2,
+    "move_speed": 3.4,
+    "radius": 0.85,
+    "ranged": true,
+    "projectile_style": "fire_bolt",
+    "projectile_speed": 18,
+    "projectile_muzzle": 1.7
+  },
+  "abilities": {
+    "Q": {
+      "name": "화염 뱉기",
+      "type": "spit_pool",
+      "style": "fire",
+      "aim": "ground",
+      "cooldown": [
+        9,
+        8.5,
+        8,
+        7.5,
+        7
+      ],
+      "mana": [
+        60,
+        63,
+        66,
+        69,
+        72
+      ],
+      "range": 8.0,
+      "radius": 2.0,
+      "flight": 0.8,
+      "duration": 5.0,
+      "damage": [
+        40,
+        60,
+        80,
+        100,
+        120
+      ],
+      "ad_ratio": 0.3,
+      "damage_type": "magic",
+      "damage_per_sec": [
+        16,
+        24,
+        32,
+        40,
+        48
+      ],
+      "damage_per_sec_ad": 0.1,
+      "desc": "불덩이를 포물선으로 뱉습니다. 떨어진 자리(반경 2.0)에 피해를 주고 5초 동안 불길이 남아, 위에 선 적은 초당 피해를 입습니다."
+    },
+    "W": {
+      "name": "날개 폭풍",
+      "type": "tornado",
+      "style": "tornado",
+      "aim": "cone",
+      "cooldown": [
+        12,
+        11.5,
+        11,
+        10.5,
+        10
+      ],
+      "mana": [
+        55,
+        58,
+        61,
+        64,
+        67
+      ],
+      "range": 9.0,
+      "speed": 9.0,
+      "width": 2.6,
+      "delay": 0.35,
+      "damage": [
+        50,
+        80,
+        110,
+        140,
+        170
+      ],
+      "ad_ratio": 0.5,
+      "damage_type": "magic",
+      "slow": 0.3,
+      "slow_duration": 1.4,
+      "desc": "날개를 머리 위로 치켜들었다가 앞으로 크게 휘두릅니다. 전방 부채꼴(사거리 6.5, 100°)의 적은 피해를 입고 느려지며 밀려나고(벽에 부딪히면 잠시 기절), 한가운데로는 회오리가 사거리 9 끝까지 굴러가며 닿는 적을 피해와 함께 공중에 띄웁니다(0.9초 에어본).",
+      "angle": 100,
+      "cone_range": 6.5,
+      "cone_damage": [
+        30,
+        50,
+        70,
+        90,
+        110
+      ],
+      "cone_damage_ad": 0.3,
+      "airborne": 0.9,
+      "knock_distance": 2.0,
+      "knock_speed": 14.0,
+      "wall_stun": 0.8
+    },
+    "E": {
+      "name": "날개 후려치기",
+      "type": "wing_sweep",
+      "style": "sweep",
+      "aim": "circle",
+      "cooldown": [
+        14,
+        13.5,
+        13,
+        12.5,
+        12
+      ],
+      "mana": [
+        65,
+        68,
+        71,
+        74,
+        77
+      ],
+      "radius": 4.5,
+      "delay": 0.45,
+      "damage": [
+        70,
+        110,
+        150,
+        190,
+        230
+      ],
+      "ad_ratio": 0.65,
+      "damage_type": "physical",
+      "slow": 0.4,
+      "slow_duration": 1.5,
+      "knock_distance": 1.8,
+      "knock_speed": 12.0,
+      "wall_stun": 0.6,
+      "desc": "누르고 있으면 범위(반경 4.5)가 표시되고, 떼면 날개를 뒤로 젖혔다가(잠깐 뒤 발동) 몸 둘레를 크게 후려칩니다. 맞은 적은 피해를 입고 바깥으로 밀려나며 느려집니다."
+    },
+    "R": {
+      "name": "불꽃 비행",
+      "type": "sky_dive",
+      "style": "skyfire",
+      "aim": "ground",
+      "cooldown": [
+        100,
+        85,
+        70
+      ],
+      "mana": [
+        100,
+        100,
+        100
+      ],
+      "range": 16.5,
+      "radius": 3.2,
+      "rise": 1.0,
+      "height": 6.5,
+      "damage": [
+        120,
+        190,
+        260
+      ],
+      "ad_ratio": 0.6,
+      "damage_type": "magic",
+      "path_damage": [
+        40,
+        65,
+        90
+      ],
+      "path_damage_ad": 0.2,
+      "path_width": 5.0,
+      "slow": 0.35,
+      "slow_duration": 1.2,
+      "zone": {
+        "radius": 3.2,
+        "duration": 3.0,
+        "damage_per_sec": [
+          20,
+          30,
+          40
+        ],
+        "damage_per_sec_ad": 0.1,
+        "damage_type": "magic",
+        "style": "fire"
+      },
+      "desc": "하늘 높이 날아오르는 동안(약 1초) 대상으로 지정되지 않습니다. 이어서 지정한 곳(사거리 16.5)까지 수평으로 날아가며 입에서 아래로 불을 쏟고, 도착하면 내려앉습니다. 지나는 길은 바깥 바(폭 5)에 닿으면 피해와 둔화, 안쪽 바(폭 3)에 있으면 2배 피해를 받고, 착지 지점(반경 3.2)은 큰 피해와 둔화를 받으며 3초간 불길이 남습니다.",
+      "speed": 10.0,
+      "min_flight": 0.7,
+      "inner_width": 3.0,
+      "inner_mult": 2.0
+    }
+  }
+}

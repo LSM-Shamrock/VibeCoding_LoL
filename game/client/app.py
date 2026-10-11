@@ -12,6 +12,8 @@ from ..shared.net import NetClient
 from . import ui
 from .keybinds import KeyBinds
 from .gl import Renderer, model_matrix
+from .audio import Audio
+from .cursors import CursorManager
 from .models import ModelLibrary
 
 WIDTH, HEIGHT = 1280, 720
@@ -36,6 +38,10 @@ class Scene:
 
     def __init__(self, app):
         self.app = app
+
+    def cursor_kind(self):
+        """이 장면에서 보여 줄 마우스 커서: None(일반 윈도우 커서) / default(손) / attack(칼) / target(조준경)."""
+        return None
 
     def on_enter(self):
         pass
@@ -88,6 +94,10 @@ class App:
         pygame.key.stop_text_input()
         self.clock = pygame.time.Clock()
         self.keybinds = KeyBinds.load()   # 조작키 (게임 중 ESC 설정 창에서 변경)
+        self.cursors = CursorManager()    # 손 / 칼 / 조준경 커서 (시스템 커서는 숨김)
+        self.audio = Audio()              # 효과음 (data/sounds.json). 소리 크기는 ESC 설정 창에서 변경
+        self.audio.preload()
+        ui.set_sfx(self.audio.play)
         self.net = NetClient()
         self.server = None          # 이 프로세스에서 띄운 서버
         self.my_key = None
@@ -111,6 +121,7 @@ class App:
         self.renderer.vision = None     # 전장의 안개는 인게임 장면에서만
         self.set_fullscreen(scene.fullscreen)
         pygame.event.set_grab(scene.grab_mouse)
+        self.audio.play_music("bgm_game" if type(scene).__name__ == "GameScene" else "bgm_menu")
         scene.on_enter()
 
     # ------------------------------------------------------------------ 창 모드
@@ -197,6 +208,7 @@ class App:
             if t == "welcome":
                 self.my_key = msg["key"]
                 self.my_name = msg["name"]
+                self.audio.play("ui_confirm")
                 self.set_scene(LobbyScene(self))
             elif t == "rooms":
                 self.rooms = msg["rooms"]
@@ -210,12 +222,15 @@ class App:
             elif t == "game_start":
                 self.set_scene(GameScene(self, msg))
             elif t == "error":
+                self.audio.play("ui_error")
                 self.toast(msg.get("msg", "오류"))
             elif t == "chat":
+                self.audio.play("ui_chat")
                 self.chat.append((time.time(), msg["name"], msg["text"]))
                 self.chat = self.chat[-8:]
             elif t == "disconnected":
                 self.room = None
+                self.audio.play("ui_error")
                 self.toast("서버와 연결이 끊어졌습니다.")
                 self.set_scene(TitleScene(self))
             if self.scene is not None:
@@ -244,6 +259,7 @@ class App:
     def run(self):
         while self.running:
             dt = min(0.05, self.clock.tick(120) / 1000.0)
+            self.audio.tick_music()
             self.time += dt
             self.renderer.time = self.time
             for e in pygame.event.get():
@@ -264,6 +280,7 @@ class App:
             surf = self.renderer.overlay.begin()
             self.scene.draw_ui(surf)
             self.draw_toasts(surf)
+            self.cursors.draw(surf, self.scene.cursor_kind())
             self.renderer.end_overlay()
             if self.autotest:
                 self.autotest.after_frame(self)

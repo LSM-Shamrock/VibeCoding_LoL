@@ -2,13 +2,14 @@
 
 조작 (롤과 비슷하게)
 - 우클릭: 이동 / 적 클릭 시 공격 (누르고 있으면 계속 이동)
-- Q W E R: 누르고 있으면 범위 표시, 떼면 마우스 위치로 시전 (W 처럼 즉시형은 바로 시전)
+- Q W E R: 누르고 있으면 범위 표시, 떼면 마우스 위치로 시전 (즉시형 스킬은 바로 시전)
+  · 아군 지정 스킬은 마우스에서 가장 가까운 아군(나 포함)에게, 먼 거리 순간이동 스킬은 미니맵을 눌러도 쓸 수 있다
 - Ctrl + Q/W/E/R: 스킬 레벨 업 (HUD 의 + 버튼 클릭도 가능)
 - D: 점멸, F: 표식(눈덩이) — 맞힌 뒤 F 를 다시 누르면 대상에게 돌진
 - A + 좌클릭: 공격 이동, S: 정지
 - B: 귀환 (8초 정신집중, 이동/공격/스킬/피해 시 취소), P: 상점 (사망 중이거나 우물 안에서만 구매), Tab: 점수판
 - 시야: 아군 주변만 보이고(전장의 안개), 부쉬 안의 적은 같은 부쉬에 들어가야 보인다
-- Y: 카메라 고정/해제, Space: 내 챔피언으로 카메라 이동, 마우스 휠: 줌
+- Y: 카메라 고정/자유 전환 (처음엔 자유 카메라), F6~F9: 테스트 치트 (체력/마나/쿨타임/레벨), Space: 내 챔피언으로 카메라 이동, 마우스 휠: 줌
 - Enter: 채팅 (Enter 로 보내기, Esc 로 취소). 킬·포탑 파괴 같은 알림도 채팅창에 올라온다
 """
 import math
@@ -20,6 +21,7 @@ import pygame
 
 from ...shared import data as gamedata
 from ...shared import mapdata
+from ...shared.spells import DEFAULT_SPELLS, SPELLS
 from ...shared.constants import (
     BLUE, FLASH_COOLDOWN, FLASH_RANGE, INVENTORY_SLOTS, MARK_COOLDOWN, MARK_RANGE, MARK_RECAST_TIME, RECALL_TIME, RED,
     SELL_RATIO, SIGHT,
@@ -30,12 +32,39 @@ from ..geometry import MeshBuilder
 from ..keybinds import ACTIONS
 from ..gl import Mesh, facing_to_rot, model_matrix
 from ..procedural import build_bush
+from ..rigs.spider import SC as SC_RIG, baby_period
+from ..vfx import SUPPORT_FX, SUPPORT_SPELLS, SUPPORT_ZONES, Vfx, fx_color
 
-MINION_KEYS = {0: "minion_melee", 1: "minion_caster", 2: "minion_cannon", 3: "minion_super"}
-MINION_RADIUS = {0: 0.45, 1: 0.4, 2: 0.6, 3: 0.75}
-MINION_HEIGHT = {0: 1.2, 1: 1.25, 2: 1.1, 3: 2.0}
-PROJ_SPEED = {"arrow": 22, "frost_arrow": 24, "snowball": 25, "turret_shot": 16, "minion_bolt": 14,
-              "cannon_ball": 14}
+MINION_KEYS = {0: "minion_melee", 1: "minion_caster", 2: "minion_cannon", 3: "minion_super", 4: "minion_spiderling"}
+BABY_PERIOD = baby_period()          # 새끼 거미 걸음 한 주기(초)
+ATTACK_SFX_VOL = 0.4                  # 일반 공격·미니언 공격 효과음 배율 (원래 소리의 40%)
+MANA_BLUE = (90, 170, 255)         # 마나 표시 글자 색
+BABY_ATTACK_TILT = -0.55         # 새끼 거미가 공격할 때 앞을 드는 각도(라디안)
+MINION_RADIUS = {0: 0.45, 1: 0.4, 2: 0.6, 3: 0.75, 4: 0.34}
+MINION_HEIGHT = {0: 1.2, 1: 1.25, 2: 1.1, 3: 2.0, 4: 0.7}
+PROJ_SPEED = {"arrow": 22, "snowball": 25, "turret_shot": 16, "turret_shot_2": 16, "turret_shot_3": 16, "minion_bolt": 14, "cannon_ball": 14,
+              "knife": 11, "knife_fast": 40, "hook": 30, "chain": 22, "giant_arrow": 45,
+              "light_bolt": 20, "leaf_bolt": 20, "web_shot": 20, "baby_shot": 20, "fire_bolt": 18, "tornado": 9}
+# 투사체별 (높이, 발광색)
+PROJ_LOOK = {"turret_shot": (3.2, (0.3, 0.3, 0.3)), "turret_shot_2": (3.2, (0.5, 0.25, 0.1)), "turret_shot_3": (3.2, (0.7, 0.15, 0.08)), "minion_bolt": (0.8, None), "cannon_ball": (0.8, None),
+             "snowball": (1.1, (0.3, 0.3, 0.3)), "knife": (1.0, None), "knife_fast": (1.0, (0.15, 0.15, 0.2)),
+             "hook": (1.0, None), "chain": (1.0, (0.2, 0.15, 0.3)), "giant_arrow": (1.1, (0.3, 0.25, 0.1)),
+             "light_bolt": (1.25, (0.4, 0.35, 0.15)), "leaf_bolt": (1.2, (0.05, 0.2, 0.05)), "web_shot": (1.0, (0.2, 0.2, 0.15)), "baby_shot": (0.8, (0.2, 0.2, 0.15)),
+             "fire_bolt": (1.9, (0.9, 0.4, 0.08)), "tornado": (0.0, None)}
+RING_THIN = 0.04            # models.py 의 ring_thin 두께 비율 (바깥 반지름의 몇 %가 선 두께인가)
+# 투사체 크기 배율 (잘 보이도록 모델보다 키워서 그린다)
+PROJ_SCALE = {"arrow": 1.4, "snowball": 1.35, "turret_shot": 1.0, "turret_shot_2": 1.0, "turret_shot_3": 1.0, "minion_bolt": 1.8, "cannon_ball": 1.5,
+              "knife": 1.35, "knife_fast": 1.4, "hook": 1.3, "chain": 1.3, "giant_arrow": 1.25,
+              "light_bolt": 1.4, "leaf_bolt": 1.4, "web_shot": 1.3, "baby_shot": 1.0, "fire_bolt": 1.0, "tornado": 1.0}
+# 챔피언 머리 위/아래에 붙는 상태 표시 (이름, 색)
+STATUS_BADGES = [
+    ("silence", "침묵", (150, 90, 220)), ("root", "속박", (160, 120, 60)), ("air", "공중", (120, 190, 255)),
+    ("caged", "감금", (200, 140, 50)), ("marked", "울림", (235, 190, 80)), ("undying", "불사", (255, 215, 90)),
+    ("exhaust", "탈진", (190, 140, 230)), ("ignite", "점화", (255, 130, 80)),
+    ("immune", "면역", (230, 235, 245)), ("counter", "반격", (255, 180, 90)), ("echo", "메아리", (210, 150, 80)),
+    ("ghost", "유령", (150, 230, 200)), ("rope", "외줄", (220, 190, 120)), ("vamp", "흡혈", (230, 70, 100)),
+    ("pierce", "관통", (130, 220, 150)),
+]
 STAT_LABELS = [("ad", "공격력", 1), ("ap", "주문력", 1), ("hp", "체력", 1), ("mana", "마나", 1),
                ("armor", "방어력", 1), ("mr", "마법 저항력", 1), ("attack_speed", "공격 속도 %", 100),
                ("move_speed", "이동 속도", 100), ("ability_haste", "스킬 가속", 1), ("crit", "치명타 %", 100),
@@ -47,9 +76,11 @@ HOVER_RADIUS = {"champion": 58, "minion": 38}
 HUD_RECT = pygame.Rect(300, 606, 680, 108)
 MINIMAP_X = 70.0                        # 미니맵이 덮는 x 범위 (±)
 INV_COLS = 4                            # 인벤토리 4칸 x 2줄
-CHAT_X, CHAT_Y, CHAT_W = 12, 572, 400     # 채팅 입력칸 (왼쪽 아래, 로그는 그 위로 쌓임)
+CHAT_X, CHAT_Y, CHAT_W = 12, 572, 440     # 채팅 입력칸 (왼쪽 아래, 로그는 그 위로 쌓임)
+CHAT_FONT, CHAT_LINE = 16, 22              # 채팅 글자 크기, 줄 간격
 CHAT_SHOW = 10.0                           # 채팅창이 닫혀 있을 때 새 줄이 보이는 시간 (초)
-SETTINGS_RECT = pygame.Rect(WIDTH // 2 - 260, 70, 520, 560)
+SETTINGS_RECT = pygame.Rect(WIDTH // 2 - 260, 70, 520, 620)
+SETTINGS_TABS = [("keys", "조작키"), ("sound", "사운드")]
 MOVE_COLOR = (0.35, 0.65, 1.0)          # 이동 지점 표시 색
 MOVE_COLOR_UI = (110, 175, 255)
 # 능력치 패널: (아이콘 파일 키, 이름, 값 함수). 아이콘은 assets/ui/stats/<키>.png 를 넣으면 쓰인다.
@@ -65,6 +96,7 @@ STAT_FALLBACK = {"ad": ((230, 140, 60), "공"), "ap": ((160, 110, 240), "주"), 
                  "move_speed": ((200, 210, 220), "이"), "ability_haste": ((120, 210, 230), "가"),
                  "crit": ((235, 90, 80), "치")}
 MINIMAP = pygame.Rect(1000, 606, 270, 108)
+TEAMFRAME = pygame.Rect(1000, 392, 270, 208)      # 미니맵 위 팀 프로필 (아군 체력 / 적 사망 표시)
 ABILITY_X = {"Q": 392, "W": 454, "E": 516, "R": 578}
 SPELL_X = {"D": 652, "F": 702}
 
@@ -79,38 +111,138 @@ def _seg_dist(px, py, a, b):
     return math.hypot(px - (ax + vx * k), py - (ay + vy * k))
 
 
-# 스킬 상세 설명 (Shift): 레벨마다 바뀌는 값 / 고정 값. (데이터 키, 이름, 표시 형식)
+# 스킬 상세 설명 (Shift): (데이터 키, 이름, 표시 형식). 값이 리스트면 스킬 레벨별 값, 아니면 고정 값으로 보여준다.
 RANK_STATS = [("cooldown", "재사용 대기시간", "{:g}초"), ("mana", "마나 소모", "{:g}"), ("damage", "피해량", "{:g}"),
-              ("attack_speed_pct", "공격 속도", "+{:.0%}"), ("move_speed_pct", "이동 속도", "+{:.0%}"),
-              ("empower_magic", "강화 공격 추가 피해", "{:g}")]
+              ("heal", "회복량", "{:g}"), ("heal_per_sec", "초당 회복량", "{:g}"), ("shield", "보호막", "{:g}"),
+              ("burst_damage", "보호막 파괴 시 피해", "{:g}"), ("attack_speed_pct", "공격 속도", "+{:.0%}"),
+              ("move_speed_pct", "이동 속도", "+{:.0%}"), ("pct", "생명력 흡수", "{:.0%}"),
+              ("empower_magic", "강화 공격 추가 피해", "{:g}"), ("empower_damage", "강화 공격 추가 피해", "{:g}"),
+              ("armor_per_mark", "표식당 방어력", "+{:g}"), ("airborne", "공중에 띄움", "{:g}초"),
+              ("wall_stun", "벽 충돌 기절", "{:g}초"), ("duration", "지속 시간", "{:g}초"),
+              ("baby_ad", "새끼 거미 평타 피해", "{:g}"), ("baby_hp", "새끼 거미 체력", "{:g}"), ("cocoon_hp", "고치 체력", "{:g}")]
 FLAT_STATS = [("ad_ratio", "공격력 계수", "{:.0%}"), ("bonus_ad_ratio", "추가 공격력 계수", "{:.0%}"),
-              ("ap_ratio", "주문력 계수", "{:.0%}"), ("empower_ap_ratio", "강화 공격 주문력 계수", "{:.0%}"),
-              ("range", "사거리", lambda v: f"{v * 100:g}"), ("radius", "범위 반경", lambda v: f"{v * 100:g}"),
+              ("ap_ratio", "주문력 계수", "{:.0%}"), ("baby_ad_ratio", "새끼 거미 공격력 계수", "{:.0%}"), ("empower_ap_ratio", "강화 공격 주문력 계수", "{:.0%}"),
+              ("empower_damage_ad", "강화 공격 공격력 계수", "{:.0%}"), ("heal_ap", "회복 주문력 계수", "{:.0%}"),
+              ("heal_per_sec_ap", "초당 회복 주문력 계수", "{:.0%}"), ("shield_ap", "보호막 주문력 계수", "{:.0%}"),
+              ("burst_damage_ap", "파괴 피해 주문력 계수", "{:.0%}"),
+              ("range", "사거리", lambda v: f"{v * 100:g}"), ("bush_range", "부쉬 안 사거리", lambda v: f"{v * 100:g}"),
+              ("length", "줄 길이", lambda v: f"{v * 100:g}"), ("radius", "범위 반경", lambda v: f"{v * 100:g}"),
+              ("land_radius", "착지 범위", lambda v: f"{v * 100:g}"), ("burst_radius", "파괴 피해 범위", lambda v: f"{v * 100:g}"),
+              ("trigger_radius", "발동 범위", lambda v: f"{v * 100:g}"), ("angle", "각도", "{:g}°"),
+              ("ratio", "받은 피해의 보호막 전환", "{:.0%}"), ("shield_life", "보호막 유지", "{:g}초"),
+              ("defer_pct", "지연 피해 비율", "{:.0%}"), ("defer_time", "지연 피해 시간", "{:g}초"),
+              ("knock_distance", "밀어내는 거리", lambda v: f"{v * 100:g}"), ("max_targets", "최대 대상 수", "{:g}명"),
+              ("count", "투척 수", "{:g}자루"), ("max_traps", "최대 설치 수", "{:g}개"),
+              ("lifetime", "유지 시간", "{:g}초"), ("reveal", "시야 노출", "{:g}초"),
               ("slow", "둔화", "{:.0%}"), ("slow_duration", "둔화 시간", "{:g}초"), ("stun", "기절", "{:g}초"),
-              ("duration", "지속 시간", "{:g}초"), ("empower_duration", "강화 지속 시간", "{:g}초"),
-              ("delay", "발동 지연", "{:g}초")]
+              ("root", "속박", "{:g}초"), ("silence", "침묵", "{:g}초"), ("immune", "CC 면역", "{:g}초"),
+              ("undying", "불사 시간", "{:g}초"), ("mark_duration", "표식 지속", "{:g}초"),
+              ("empower_duration", "강화 지속 시간", "{:g}초"), ("delay", "발동 지연", "{:g}초")]
 DAMAGE_TYPES = {"physical": "물리", "magic": "마법", "true": "고정"}
-# 소환사 주문: 주문 id -> (이름, 아이콘 색, 설명, 상세)
-SPELL_INFO = {
-    "D": ("점멸", (90, 80, 40), "짧은 거리 순간이동",
-          [("사거리", f"{FLASH_RANGE * 100:g}"), ("재사용 대기시간", f"{FLASH_COOLDOWN:g}초")]),
-    "F": ("표식", (60, 90, 110), "눈덩이 투척 · 적중 후 재사용 시 돌진",
-          [("피해량", "10 + 레벨 × 5 (고정)"), ("사거리", f"{MARK_RANGE * 100:g}"),
-           ("돌진 가능 시간", f"{MARK_RECAST_TIME:g}초"), ("재사용 대기시간", f"{MARK_COOLDOWN:g}초")]),
-}
+
+
+_PORTRAITS = {}
+
+
+def champ_portrait(chid, size, gray=False):
+    """assets/ui/portraits/<챔피언id>.png (tools/build_portraits.py 로 생성). 없으면 None. gray=True 면 흑백."""
+    key = (chid, size, gray)
+    if key not in _PORTRAITS:
+        img = ui.icon(f"assets/ui/portraits/{chid}.png", size)
+        if img is not None and gray:
+            img = img.copy()
+            arr = pygame.surfarray.pixels3d(img)
+            g = (arr[..., 0] * 0.3 + arr[..., 1] * 0.59 + arr[..., 2] * 0.11).astype("uint8")
+            for c in range(3):
+                arr[..., c] = g
+            del arr
+        _PORTRAITS[key] = img
+    return _PORTRAITS[key]
+
+
+_ROUND = {}
+
+
+def draw_round_portrait(surf, chid, center, r, ring, dead=False, color=(160, 170, 190), ring_w=2):
+    """원형 챔피언 초상화 (HUD·점수판·챔피언 선택 공통). 초상화 파일이 없으면 색 원 + 첫 글자."""
+    key = (chid, r, dead)
+    if key not in _ROUND:
+        img = champ_portrait(chid, r * 2, dead)
+        if img is not None:
+            img = img.copy()
+            mask = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
+            pygame.draw.circle(mask, (255, 255, 255, 255), (r, r), r)
+            img.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+        _ROUND[key] = img
+    img = _ROUND[key]
+    if img is not None:
+        surf.blit(img, (center[0] - r, center[1] - r))
+        if dead:
+            shade(surf, pygame.Rect(center[0] - r, center[1] - r, r * 2, r * 2), (0, 0, 0, 55), r)
+    else:
+        data = gamedata.champion(chid) or {}
+        col = tuple(v // 3 for v in color) if dead else tuple(color)
+        pygame.draw.circle(surf, col, center, r)
+        ui.text(surf, (data.get("name") or "?")[0], center, int(r * 0.9), (20, 30, 50) if not dead else (90, 90, 100),
+                anchor="center", bold=True, shadow=False)
+    if ring_w > 0:
+        pygame.draw.circle(surf, ring if not dead else (110, 112, 120), center, r, ring_w)
+
+
+def draw_hp_ring(surf, center, r, ratio, color, width=3):
+    """초상화 둘레의 원형 체력 표시: 12시 방향에서 시계 방향으로 체력 비율만큼 색이 차 있고 나머지는 어둡다.
+    4배 크기로 그려 줄여서 가장자리가 매끈하다."""
+    k = 4
+    size = (r + 2) * 2 * k
+    c = size / 2
+    img = pygame.Surface((size, size), pygame.SRCALPHA)
+    r_out, r_in = r * k, (r - width) * k
+    pygame.draw.circle(img, (24, 24, 32, 235), (c, c), r_out)
+    pygame.draw.circle(img, (0, 0, 0, 0), (c, c), r_in)
+    ratio = max(0.0, min(1.0, ratio))
+    if ratio > 0.002:
+        n = max(2, int(72 * ratio) + 2)
+        a0 = -math.pi / 2
+        pts = [(c + math.cos(a0 + math.tau * ratio * i / n) * r_out, c + math.sin(a0 + math.tau * ratio * i / n) * r_out) for i in range(n + 1)]
+        pts += [(c + math.cos(a0 + math.tau * ratio * i / n) * r_in, c + math.sin(a0 + math.tau * ratio * i / n) * r_in) for i in range(n, -1, -1)]
+        if ratio >= 0.998:
+            pygame.draw.circle(img, (*color, 255), (c, c), r_out)
+            pygame.draw.circle(img, (0, 0, 0, 0), (c, c), r_in)
+        else:
+            pygame.draw.polygon(img, (*color, 255), pts)
+    small = pygame.transform.smoothscale(img, (size // k, size // k))
+    surf.blit(small, (center[0] - size // k // 2, center[1] - size // k // 2))
+
+
+def shade(surf, rect, color, radius=0):
+    """rect 위에 반투명 색(라운드 모서리)을 덮는다."""
+    sh = pygame.Surface(pygame.Rect(rect).size, pygame.SRCALPHA)
+    pygame.draw.rect(sh, color, sh.get_rect(), border_radius=radius)
+    surf.blit(sh, rect)
+
+
+def _fmt_stat(fmt, v):
+    return fmt(v) if callable(fmt) else fmt.format(v)
 
 
 def ability_details(ab):
     """스킬 데이터 -> [(이름, 값)] — 값이 리스트면 스킬 레벨별 값."""
     rows = []
+
+    def add(key, label, fmt):
+        v = ab[key]
+        rows.append((label, [_fmt_stat(fmt, x) for x in v] if isinstance(v, (list, tuple)) else _fmt_stat(fmt, v)))
+
     for key, label, fmt in RANK_STATS:
-        if key in ab:
-            rows.append((label, [fmt.format(v) for v in ab[key]]))
+        if key in ab and key != "duration":
+            add(key, label, fmt)
     if "damage_type" in ab:
         rows.append(("피해 유형", DAMAGE_TYPES.get(ab["damage_type"], ab["damage_type"])))
+    if "duration" in ab:
+        add("duration", "지속 시간", "{:g}초")
     for key, label, fmt in FLAT_STATS:
         if key in ab:
-            rows.append((label, fmt(ab[key]) if callable(fmt) else fmt.format(ab[key])))
+            add(key, label, fmt)
     return rows
 
 
@@ -146,6 +278,9 @@ class CEnt:
         self.d = None
         self.swing_t = -10.0        # 마지막 공격 휘두르기 시작 시각 (미니언 무기 모션)
         self.visible = True         # 이번 스냅샷에 포함됐는가 (시야 밖의 적은 빠진다)
+        self.lift = 0.0             # 공중에 띄워진 높이 (에어본·외줄)
+        self.ca = None              # 뼈대 애니메이션 제어기 (챔피언 전용, models.new_champ_anim)
+        self.last_swing = -10.0     # 마지막으로 기본 공격 소리를 낸 시각
 
     def set_target(self, x, z, f):
         if math.hypot(x - self.x, z - self.z) > 6.0:      # 순간이동(점멸, 부활 등)
@@ -175,8 +310,14 @@ class GameScene(Scene):
         self.minions = {}
         self.projs = {}
         self.ground_effects = []
+        self.ef_total = {}          # 장판 id -> 처음 받은 남은 시간 (예고 연출 진행도 계산용)
+        self.zones = []             # 성역·정원·덫·대종 감옥 등 (row, 받은 시각)
+        self.anchors = []           # 줄 말뚝 (row, 받은 시각)
         self.relics = []
         self.fx = []
+        self.cast_msg = None               # (안내 문구, 만료 시각)
+        self.leap_marks = {}               # 도약 중인 시전자 id -> 착지 범위 표시
+        self.vfx = Vfx(app.renderer)           # 그림(스프라이트) 입자 이펙트 (스킬 컨셉 연출)
         self.floaters = []
         self.killfeed = []
         self.announces = []
@@ -185,10 +326,18 @@ class GameScene(Scene):
         self.wave_in = 0.0
         self.winner = None
         self.over_at = 0.0
+        self.audio = app.audio
+        self.last_kill_at = -99.0   # 내가 마지막으로 처치한 시각 (연속 처치 알림용)
+        self.my_ranks = None        # 내 스킬 레벨 / 아이템 수 (올랐는지 알아보려고)
+        self.my_item_count = None
+        self.foot_t = 0.0           # 다음 발소리까지 남은 시간
+        self.shop_was_open = False
+        self.volume_rect = None     # 설정 창의 소리 크기 막대
+        self.volume_drag = False
 
         self.shop_open = False
         self.show_score = False
-        self.cam_locked = True
+        self.cam_locked = False          # 처음엔 자유 카메라 (Y 로 고정 전환)
         self.aiming = None
         self.amove_pending = False
         self.rmb_down = False
@@ -212,6 +361,7 @@ class GameScene(Scene):
         self.binds = app.keybinds
         self.held = set()           # 누르고 있는 행동 (카메라 중심 등)
         self.settings_open = False  # ESC 설정 창
+        self.settings_tab = "keys"  # 설정 창 탭: keys(조작키) / sound(사운드)
         self.rebinding = None       # 새 키를 기다리는 행동
         self.settings_rects = []
         self.stat_rects = []
@@ -220,6 +370,14 @@ class GameScene(Scene):
         b = MeshBuilder()
         b.rect_xz(-0.5, 0.0, 0.5, 1.0, 0.0, (1, 1, 1))
         self.quad = Mesh.from_builder(app.renderer, b)
+        # 선 모양 효과용 막대 (z: 0~1, 단면 1x1) / 세로 기둥 (반지름 1, 높이 1) / 부채꼴 캐시
+        b = MeshBuilder()
+        b.box((0, 0, 0.5), (1, 1, 1), (1, 1, 1))
+        self.beam = Mesh.from_builder(app.renderer, b)
+        b = MeshBuilder()
+        b.cylinder((0, 0, 0), 1.0, 1.0, (1, 1, 1), seg=16, cap=False)
+        self.pillar = Mesh.from_builder(app.renderer, b)
+        self.sectors = {}
 
         for cid, info in self.champ_info.items():
             app.models.champion(info["c"])
@@ -239,9 +397,15 @@ class GameScene(Scene):
         xs = mapdata.VIS_X0 + (np.arange(self.vis_nx) + 0.5) * mapdata.VIS_CELL
         zs = mapdata.VIS_Z0 + (np.arange(self.vis_nz) + 0.5) * mapdata.VIS_CELL
         self.vis_x, self.vis_z = np.meshgrid(xs, zs)
-        self.vis_bush = np.full(self.vis_x.shape, -1, dtype=np.int8)
+        # 부쉬는 가장자리가 부드럽게 넘어가도록 칸마다 "부쉬 안쪽 정도"(0~1)를 미리 계산한다
+        nb = len(mapdata.BUSHES)
+        bsoft = np.zeros((nb,) + self.vis_x.shape, dtype=np.float32)
         for i, (bx, bz, rx, rz) in enumerate(mapdata.BUSHES):
-            self.vis_bush[((self.vis_x - bx) / rx) ** 2 + ((self.vis_z - bz) / rz) ** 2 <= 1.0] = i
+            ell = np.sqrt(((self.vis_x - bx) / rx) ** 2 + ((self.vis_z - bz) / rz) ** 2)
+            bsoft[i] = np.clip((1.12 - ell) / 0.24, 0.0, 1.0)
+        # 관찰자가 있는 부쉬(-1 = 부쉬 밖)별로, 그 관찰자가 "볼 수 없는" 다른 부쉬 칸의 정도
+        self.vis_block = {ob: (np.max(np.delete(bsoft, ob, axis=0), axis=0) if nb > 1 else np.zeros(self.vis_x.shape, np.float32))
+                          if ob >= 0 else np.max(bsoft, axis=0) for ob in range(-1, nb)}
         self.vis = np.ones(self.vis_x.shape, dtype=np.float32)
         self.vis_tex = app.renderer.ctx.texture((self.vis_nx, self.vis_nz), 1, dtype="f1")
         self.vis_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
@@ -262,6 +426,7 @@ class GameScene(Scene):
         # 텍스트 입력(IME)이 켜져 있으면 한글 모드에서 스킬 키가 입력기로 빠져 나가므로 끈다
         pygame.key.stop_text_input()
         self.app.renderer.vision = (self.vis_tex, self.vis_rect)
+        self.audio.play("vo_start")
 
     # ------------------------------------------------------------------ 시야
     def update_vision(self):
@@ -279,14 +444,24 @@ class GameScene(Scene):
         for sid, st in self.structs.items():
             if st["tm"] == self.my_team and self.struct_state[sid][2]:
                 obs.append((st["x"], st["z"], SIGHT[st["k"]]))
-        vis = np.zeros(self.vis_x.shape, dtype=bool)
+        # 칸마다 "얼마나 보이는가"(0~1)를 거리에 따라 부드럽게 계산한다 (가장자리를 계단 없이 번지게)
+        vis = np.zeros(self.vis_x.shape, dtype=np.float32)
+        cell = mapdata.VIS_CELL
+        soft = 1.6
         for ox, oz, r in obs:
-            m = (self.vis_x - ox) ** 2 + (self.vis_z - oz) ** 2 <= r * r
-            ob = mapdata.bush_at(ox, oz)
-            vis |= m & ((self.vis_bush < 0) | (self.vis_bush == ob))
-        # 부드럽게 밝아지고 어두워지게
-        self.vis += (vis.astype(np.float32) - self.vis) * 0.5
-        self.vis_tex.write((self.vis * 255).astype(np.uint8).tobytes())
+            reach = r + soft
+            i0 = max(0, int((ox - reach - mapdata.VIS_X0) / cell))
+            i1 = min(self.vis_nx, int((ox + reach - mapdata.VIS_X0) / cell) + 2)
+            j0 = max(0, int((oz - reach - mapdata.VIS_Z0) / cell))
+            j1 = min(self.vis_nz, int((oz + reach - mapdata.VIS_Z0) / cell) + 2)
+            if i1 <= i0 or j1 <= j0:
+                continue
+            d = np.hypot(self.vis_x[j0:j1, i0:i1] - ox, self.vis_z[j0:j1, i0:i1] - oz)
+            v = np.clip((r + soft * 0.5 - d) / soft, 0.0, 1.0)
+            v *= 1.0 - self.vis_block[mapdata.bush_at(ox, oz)][j0:j1, i0:i1]
+            np.maximum(vis[j0:j1, i0:i1], v, out=vis[j0:j1, i0:i1])
+        self.vis += (vis - self.vis) * 0.5
+        self.vis_tex.write(np.rint(self.vis * 255).astype(np.uint8).tobytes())
         # 미니맵용 안개 (안 보이는 곳을 어둡게)
         fog = np.zeros((self.vis_nx, self.vis_nz, 4), dtype=np.uint8)
         fog[..., 3] = ((1.0 - self.vis.T) * 150).astype(np.uint8)
@@ -331,6 +506,8 @@ class GameScene(Scene):
         elif t == "game_over":
             self.winner = msg["winner"]
             self.over_at = time.time()
+            self.audio.play_music(None, 2500)       # 결과 화면에서는 BGM 을 서서히 끈다
+            self.audio.play("vo_win" if self.winner == self.my_team else "vo_lose")
 
     def apply_snapshot(self, s):
         now = time.time()
@@ -346,6 +523,8 @@ class GameScene(Scene):
             if (e.d and e.d["dead"] and not d["dead"]) or not e.visible:
                 e.x, e.z = d["x"], d["z"]       # 부활하거나 안개에서 나타나면 바로 그 자리에
             e.set_target(d["x"], d["z"], d["f"])
+            if e.visible:
+                self.champ_sounds(e, d, now)
             e.d = d
             e.visible = True
             seen.add(d["i"])
@@ -363,6 +542,8 @@ class GameScene(Scene):
                 e = self.minions[mid] = CEnt(mid, row[3], row[4], row[5])
             if row[8] == 2 and (e.d is None or e.d[8] != 2) and now - e.swing_t > 0.3:
                 e.swing_t = now
+                if row[1] in (0, 3):                # 근접 미니언만 휘두르는 소리 (원거리는 투사체 소리)
+                    self.sfx("minion_swing", row[3], row[4], ATTACK_SFX_VOL)
             e.set_target(row[3], row[4], row[5])
             e.d = row
             seen.add(mid)
@@ -371,18 +552,22 @@ class GameScene(Scene):
                 e = self.minions.pop(mid)
                 if mid in gone:                 # 죽은 경우만 효과 (시야 밖으로 나간 경우는 그냥 사라짐)
                     self.add_fx("poof", e.x, e.z, 0.4, color=(0.9, 0.9, 1.0))
+                    self.sfx("minion_die", e.x, e.z)
 
         for row in s["st"]:
             old = self.struct_state.get(row[0])
             if old and old[2] and not row[2]:
                 info = self.structs[row[0]]
                 self.add_fx("burst", info["x"], info["z"], 1.2, radius=4.0, color=(1.0, 0.7, 0.4))
+                self.sfx("struct_destroy" if info["k"] == "turret" else "struct_destroy_big", info["x"], info["z"])
             self.struct_state[row[0]] = row
 
         seenp = set()
         for row in s["pj"]:
             pid, style, team, x, z, dx, dz = row
             sp = PROJ_SPEED.get(style, 18)
+            if pid not in self.projs:
+                self.sfx(self.audio.projectile_sound(style), x, z)
             self.projs[pid] = {"style": style, "team": team, "x": x, "z": z, "dx": dx, "dz": dz,
                                "vx": dx * sp, "vz": dz * sp, "t": now}
             seenp.add(pid)
@@ -391,6 +576,13 @@ class GameScene(Scene):
                 del self.projs[pid]
 
         self.ground_effects = [(row, now) for row in s["ef"]]
+        for row in s["ef"]:
+            self.ef_total[row[0]] = max(self.ef_total.get(row[0], 0.0), row[6])
+        if len(self.ef_total) > len(s["ef"]) + 8:
+            live = {row[0] for row in s["ef"]}
+            self.ef_total = {k: v for k, v in self.ef_total.items() if k in live}
+        self.zones = [(row, now) for row in s.get("zn", [])]
+        self.anchors = [(row, now) for row in s.get("an", [])]
         self.relics = s["rl"]
         for ev in s["ev"]:
             self.handle_event_msg(ev)
@@ -399,6 +591,7 @@ class GameScene(Scene):
         e = ev.get("e")
         now = time.time()
         if e == "dmg":
+            self.dmg_sounds(ev)
             if ev["s"] == self.my_id:
                 tgt = self.entity_pos(ev["d"])
                 if tgt:
@@ -410,12 +603,30 @@ class GameScene(Scene):
                 if tgt:
                     self.floaters.append({"x": tgt[0], "z": tgt[1], "text": f"-{ev['v']}", "color": (255, 80, 80),
                                           "t": now, "dur": 0.8, "size": 15})
+        elif e == "cast":
+            ch = self.champs.get(ev["d"])
+            if ch and ch.ca:
+                ch.ca.cast(ev["slot"])
+            self.cast_sound(ev["d"], ev["slot"])
+            info = self.champ_info.get(ev["d"])
+            if ch and info and ch.d and ch.visible:
+                self.vfx.ctx(info["tm"] == self.my_team, False)
+                try:
+                    self.vfx.cast(info["c"], ev["slot"], ch.x, ch.z, ch.f)
+                finally:
+                    self.vfx.clear_ctx()
         elif e == "gold" and ev["d"] == self.my_id:
+            self.sfx("gold")
             self.floaters.append({"x": ev["x"], "z": ev["z"], "text": f"+{ev['v']}", "color": (250, 210, 90),
                                   "t": now, "dur": 1.0, "size": 16})
         elif e == "kill":
             self.killfeed.append((now, ev))
             self.killfeed = self.killfeed[-6:]
+            if ev["k"] == self.my_id:
+                self.sfx("kill_self")
+                if now - self.last_kill_at < 12.0:
+                    self.sfx("vo_multikill")
+                self.last_kill_at = now
             self.add_chat([(ev["kn"], ui.TEAM_UI.get(ev["kt"], ui.TEXT)), (" 님이 ", ui.TEXT_DIM),
                            (ev["vn"], ui.TEAM_UI.get(ev["vt"], ui.TEXT)), (" 님을 처치했습니다.", ui.TEXT_DIM)])
             if ev["v"] == self.my_id:
@@ -424,36 +635,174 @@ class GameScene(Scene):
                 self.announces.append((now, "적을 처치했습니다!", ui.GOLD))
         elif e == "announce":
             self.announces.append((now, ev["text"], ui.TEXT))
+            text = ev["text"]
+            self.sfx("vo_firstblood" if "선취점" in text else ("inhib_respawn" if "재생성" in text else "ui_notify"))
             self.add_chat([(ev["text"], ui.GOLD)])
         elif e == "levelup":
+            self.sfx_unit(ev["d"], "levelup", 1.0 if ev["d"] == self.my_id else 0.45)
             pos = self.entity_pos(ev["d"])
             if pos:
                 self.add_fx("ring_up", pos[0], pos[1], 0.8, radius=1.4, color=(1.0, 0.85, 0.4))
                 if ev["d"] == self.my_id:
                     self.floaters.append({"x": pos[0], "z": pos[1], "text": "레벨 업!", "color": (255, 220, 120),
                                           "t": now, "dur": 1.4, "size": 20})
-        elif e == "fx":
-            kind = ev["fx"]
-            if kind == "blizzard_burst":
-                self.add_fx("burst", ev["x"], ev["z"], 0.8, radius=ev.get("r", 3.5), color=(0.7, 0.92, 1.0))
-                self.add_fx("shards", ev["x"], ev["z"], 0.9, radius=ev.get("r", 3.5), color=(0.8, 0.95, 1.0))
-            elif kind == "flash":
-                self.add_fx("poof", ev["x"], ev["z"], 0.5, color=(1.0, 1.0, 0.6))
-                self.add_fx("poof", ev["x2"], ev["z2"], 0.5, color=(1.0, 1.0, 0.6))
-            elif kind == "relic":
-                self.add_fx("ring_up", ev["x"], ev["z"], 0.8, radius=1.6, color=(0.4, 1.0, 0.5))
-            elif kind == "recall":
-                self.add_fx("ring_up", ev["x"], ev["z"], 0.7, radius=1.4, color=(0.4, 0.7, 1.0))
-                self.add_fx("ring_up", ev["x2"], ev["z2"], 0.9, radius=1.6, color=(0.4, 0.7, 1.0))
-            elif kind == "plate":
-                self.add_fx("burst", ev["x"], ev["z"], 0.6, radius=2.2, color=(1.0, 0.82, 0.35))
-            elif kind.endswith("_hit"):
-                col = (0.95, 0.97, 1.0) if kind.startswith("snowball") else (0.6, 0.9, 1.0)
-                self.add_fx("poof", ev["x"], ev["z"], 0.35, color=col)
-        elif e == "cast":
+        elif e == "heal":
+            if ev["d"] == self.my_id:
+                self.sfx("heal")
             pos = self.entity_pos(ev["d"])
-            if pos and ev.get("slot") == "W":
-                self.add_fx("ring_up", pos[0], pos[1], 0.6, radius=1.2, color=(0.6, 0.9, 1.0))
+            if pos and (ev["d"] == self.my_id or ev["v"] >= 20):
+                self.floaters.append({"x": pos[0], "z": pos[1], "text": f"+{ev['v']}", "color": (120, 235, 130),
+                                      "t": now, "dur": 0.9, "size": 16})
+        elif e == "fx":
+            self.handle_fx(ev["fx"], ev)
+
+    def handle_fx(self, kind, ev):
+        """서버가 보낸 효과 이벤트 -> 화면 효과. ev["tm"] (스킬을 쓴 팀) 으로 아군 파랑 / 적 빨강을 정하고,
+        피해 없이 효과만 주는 스킬은 더 연하고 투명하게 그린다."""
+        self.fx_sounds(kind, ev)
+        if kind == "leap":                                      # 점프 덮치기: 몸을 공중 자세로
+            ch = self.champs.get(ev.get("d"))
+            if ch and ch.ca and ch.ca.is_rig:
+                ch.ca.leap(ev.get("dur", 0.5), ev.get("delay", 0.0))
+        if kind in ("lunge", "serpent_rear", "dive", "dive_out", "sky_dive"):   # 이무기: 돌진·내려찍기 준비·잠행·솟구침 자세를 몸에 알린다
+            ch = self.champs.get(ev.get("d"))
+            if ch and ch.ca and hasattr(ch.ca, "on_fx"):
+                ch.ca.on_fx(kind, ev)
+        if kind == "sky_dive":                                  # 불꽃 비행: 시전하는 순간부터 날아가는 동안 지면에 길(바깥·안쪽 바)과 착지 범위 표시
+            self.leap_marks[ev.get("d")] = {"tg": None, "x": ev["x2"], "z": ev["z2"], "r": ev["r"], "zr": ev.get("zr", 0.0), "tm": ev.get("tm"),
+                                            "ox": ev["x"], "oz": ev["z"], "w": ev.get("w", 5.0), "w2": ev.get("w2", 3.0),
+                                            "end": time.time() + ev.get("rise", 1.0) + ev.get("dur", 1.0)}
+        if kind == "dive" and ev.get("r"):                      # 잠행: 솟구칠 자리에 범위 표시
+            self.leap_marks[ev.get("d")] = {"tg": None, "x": ev["x2"], "z": ev["z2"], "r": ev["r"], "zr": 0.0, "tm": ev.get("tm"),
+                                            "end": time.time() + ev.get("sink", 0.6) + ev.get("dur", 0.8)}
+        if kind == "leap" and ev.get("r"):
+            self.leap_marks[ev.get("d")] = {"tg": ev.get("tg"), "x": ev["x2"], "z": ev["z2"], "r": ev["r"], "zr": ev.get("zr", 0.0),
+                                            "tm": ev.get("tm"), "end": time.time() + ev.get("delay", 0.0) + ev.get("dur", 0.5)}
+        tm = ev.get("tm")
+        style = ev.get("style")
+        if kind == "spell":
+            support = style in SUPPORT_SPELLS
+        elif kind == "zone_start":
+            support = style in SUPPORT_ZONES
+        else:
+            support = kind in SUPPORT_FX
+        ally = None if tm is None else tm == self.my_team
+        self.fx_ctx = (ally, support)
+        try:
+            if not self.vfx.play(kind, ev, ally, support):      # 컨셉 이펙트가 없는 효과만 단순 효과로
+                self.build_fx(kind, ev)
+        finally:
+            self.fx_ctx = None
+
+    def build_fx(self, kind, ev):
+        x, z = ev["x"], ev["z"]
+        rr = ev.get("r", 2.0)
+        if kind == "flash":
+            self.add_fx("poof", x, z, 0.5, color=(1.0, 1.0, 0.6))
+            self.add_fx("poof", ev["x2"], ev["z2"], 0.5, color=(1.0, 1.0, 0.6))
+        elif kind == "spell":
+            style = ev.get("style")
+            if style == "heal":
+                self.add_fx("ring_up", x, z, 0.9, radius=1.1, color=(0.5, 1.0, 0.6))
+                self.add_fx("poof", x, z, 0.5, color=(0.7, 1.0, 0.75))
+            elif style == "ghost":
+                self.add_fx("ring_up", x, z, 0.8, radius=1.2, color=(0.7, 0.8, 1.0))
+            elif style == "barrier":
+                self.add_fx("ring_up", x, z, 0.8, radius=1.1, color=(1.0, 0.8, 0.4))
+                self.add_fx("poof", x, z, 0.4, color=(1.0, 0.85, 0.5))
+            elif style == "cleanse":
+                self.add_fx("ring_up", x, z, 0.8, radius=1.0, color=(0.85, 0.97, 1.0))
+                self.add_fx("poof", x, z, 0.5, color=(0.9, 1.0, 1.0))
+            elif style == "exhaust":
+                self.add_fx("ring_up", x, z, 0.8, radius=1.1, color=(0.75, 0.5, 1.0))
+                self.add_fx("poof", x, z, 0.4, color=(0.7, 0.5, 0.9))
+            elif style == "ignite":
+                self.add_fx("burst", x, z, 0.6, radius=1.4, color=(1.0, 0.5, 0.25))
+                self.add_fx("ring_up", x, z, 0.8, radius=0.9, color=(1.0, 0.6, 0.3))
+        elif kind == "relic":
+            self.add_fx("ring_up", x, z, 0.8, radius=1.6, color=(0.4, 1.0, 0.5))
+        elif kind == "recall":
+            self.add_fx("ring_up", x, z, 0.7, radius=1.4, color=(0.4, 0.7, 1.0))
+            self.add_fx("ring_up", ev["x2"], ev["z2"], 0.9, radius=1.6, color=(0.4, 0.7, 1.0))
+        elif kind == "plate":
+            self.add_fx("burst", x, z, 0.6, radius=2.2, color=(1.0, 0.82, 0.35))
+        elif kind == "slam":
+            style = ev.get("style", "slam")
+            col = {"slam": (1.0, 0.75, 0.4), "sweep": (0.75, 0.45, 1.0), "land": (1.0, 0.85, 0.45)}.get(style, (1, 0.8, 0.5))
+            self.add_fx("burst", x, z, 0.5, radius=rr, color=col)
+            self.add_fx("shards", x, z, 0.7, radius=rr, color=col)
+            if style == "land":
+                self.add_fx("pillar", x, z, 0.5, radius=rr * 0.45, color=col, h=8.0)
+        elif kind == "buff":
+            col = {"counter": (1.0, 0.8, 0.4), "vamp": (1.0, 0.3, 0.4), "ghost": (0.7, 0.5, 1.0),
+                   "echo": (0.85, 0.6, 0.3)}.get(ev.get("style", "buff"), (0.5, 0.85, 1.0))
+            self.add_fx("ring_up", x, z, 0.7, radius=1.3, color=col)
+        elif kind == "knock":
+            self.add_fx("line", x, z, 0.35, color=(1.0, 0.85, 0.5), x2=ev["x2"], z2=ev["z2"], w=ev.get("w", 1.5))
+        elif kind == "wallhit":
+            self.add_fx("burst", x, z, 0.4, radius=1.3, color=(1.0, 0.7, 0.3))
+        elif kind == "teleport":
+            self.add_fx("poof", x, z, 0.5, color=(1.0, 0.9, 0.5))
+            self.add_fx("pillar", ev["x2"], ev["z2"], 0.6, radius=0.6, color=(1.0, 0.9, 0.5), h=9.0)
+        elif kind == "cone":
+            self.add_fx("sector", x, z, 0.45, radius=rr, color=(1.0, 0.75, 0.35), a=ev["a"], w=ev.get("w", 60))
+        elif kind == "silence_ring":
+            self.add_fx("burst", x, z, 0.6, radius=rr, color=(0.75, 0.5, 1.0))
+            self.add_fx("ring_up", x, z, 0.8, radius=rr * 0.6, color=(0.85, 0.65, 1.0))
+        elif kind == "bell_drop":
+            self.add_fx("burst", x, z, 0.5, radius=rr, color=(1.0, 0.75, 0.3))
+            self.add_fx("shards", x, z, 0.7, radius=rr, color=(1.0, 0.8, 0.4))
+        elif kind == "cage_end":
+            self.add_fx("bell_lift", x, z, 0.7, radius=rr)
+            self.add_fx("burst", x, z, 0.5, radius=rr, color=(1.0, 0.75, 0.3))
+        elif kind == "knife_burst":
+            self.add_fx("sector", x, z, 0.3, radius=4.5, color=(0.9, 0.95, 1.0), a=ev["a"], w=44)
+        elif kind == "rope_pull":
+            self.add_fx("line", x, z, 0.3, color=(0.85, 0.7, 0.4), x2=ev["x2"], z2=ev["z2"], w=0.25)
+        elif kind == "rope_up":
+            self.add_fx("ring_up", x, z, 0.6, radius=1.0, color=(0.85, 0.7, 0.4))
+            self.add_fx("ring_up", ev["x2"], ev["z2"], 0.6, radius=1.0, color=(0.85, 0.7, 0.4))
+        elif kind == "anchor_set":
+            self.add_fx("ring_up", x, z, 0.6, radius=0.9, color=(0.3, 0.85, 0.9))
+        elif kind == "anchor_break":
+            self.add_fx("burst", x, z, 0.4, radius=1.2, color=(0.8, 0.6, 0.3))
+            self.add_fx("poof", x, z, 0.4, color=(0.8, 0.65, 0.4))
+        elif kind == "trap_set":
+            self.add_fx("ring_up", x, z, 0.5, radius=0.8, color=(0.85, 0.75, 0.5))
+        elif kind == "trap_snap":
+            self.add_fx("burst", x, z, 0.5, radius=1.8, color=(1.0, 0.5, 0.3))
+            self.add_fx("poof", x, z, 0.4, color=(1.0, 0.8, 0.5))
+        elif kind == "heal":
+            self.add_fx("ring_up", x, z, 0.8, radius=0.9, color=(0.5, 1.0, 0.6))
+        elif kind == "cleanse":
+            self.add_fx("ring_up", x, z, 0.8, radius=1.0, color=(0.85, 0.97, 1.0))
+            self.add_fx("poof", x, z, 0.5, color=(0.9, 1.0, 1.0))
+        elif kind == "holy":
+            self.add_fx("burst", x, z, 0.9, radius=rr, color=(1.0, 0.92, 0.55))
+            self.add_fx("pillar", x, z, 0.9, radius=1.0, color=(1.0, 0.95, 0.6), h=9.0)
+            self.add_fx("ring_up", x, z, 1.0, radius=rr * 0.5, color=(1.0, 0.95, 0.7))
+        elif kind == "vine":
+            self.add_fx("line", x, z, 0.5, color=(0.45, 0.95, 0.4), x2=ev["x2"], z2=ev["z2"], w=ev.get("w", 1.3))
+        elif kind == "petal_burst":
+            self.add_fx("burst", x, z, 0.6, radius=rr, color=(1.0, 0.65, 0.8))
+            self.add_fx("shards", x, z, 0.8, radius=rr, color=(1.0, 0.7, 0.85))
+        elif kind == "shield":
+            self.add_fx("ring_up", x, z, 0.8, radius=1.0, color=(0.7, 0.9, 1.0))
+        elif kind == "wind":
+            self.add_fx("ring_up", x, z, 0.8, radius=1.1, color=(0.7, 1.0, 0.8))
+        elif kind == "zone_start":
+            col = (1.0, 0.92, 0.55) if ev.get("style") == "sanctuary" else (0.5, 1.0, 0.5)
+            self.add_fx("burst", x, z, 0.6, radius=rr, color=col)
+        elif kind == "pierce":
+            self.add_fx("line", x, z, 0.25, color=(0.7, 0.9, 1.0), x2=ev["x2"], z2=ev["z2"], w=0.4)
+        elif kind.endswith("_hit"):
+            style = kind[:-4]
+            col = {"knife": (0.9, 0.95, 1.0), "knife_fast": (0.9, 0.95, 1.0), "hook": (0.85, 0.7, 0.4),
+                   "chain": (0.55, 0.9, 0.9), "giant_arrow": (1.0, 0.9, 0.5), "light_bolt": (1.0, 0.9, 0.5),
+                   "leaf_bolt": (0.5, 0.95, 0.4), "snowball": (0.95, 0.97, 1.0)}.get(style, (0.9, 0.95, 1.0))
+            self.add_fx("poof", x, z, 0.35, color=col)
+            if style == "giant_arrow":
+                self.add_fx("burst", x, z, 0.5, radius=2.0, color=col)
 
     def add_chat(self, parts):
         self.chat_lines.append((time.time(), parts))
@@ -505,8 +854,160 @@ class GameScene(Scene):
             return s["x"], s["z"]
         return None
 
-    def add_fx(self, kind, x, z, dur, radius=1.0, color=(1, 1, 1)):
-        self.fx.append({"kind": kind, "x": x, "z": z, "t": time.time(), "dur": dur, "r": radius, "color": color})
+    # ------------------------------------------------------------------ 효과음
+    def sfx(self, name, x=None, z=None, vol=1.0):
+        """소리 재생. x, z 를 주면 월드의 그 위치에서 나는 소리 (카메라에서 멀면 작게, 아주 멀면 안 들림)."""
+        if name:
+            world = not name.startswith(("ui_", "vo_"))     # 화면(UI)·아나운서 소리는 그대로, 게임 속 소리는 조금 줄여서
+            self.audio.play(name, None if x is None else (x, z), vol, world=world)
+
+    def sfx_unit(self, uid, name, vol=1.0):
+        """유닛 위치에서 나는 소리. 내 챔피언의 소리는 화면 어디를 보고 있든 들린다."""
+        if not name:
+            return
+        if uid == self.my_id:
+            self.sfx(name, vol=vol)
+            return
+        pos = self.entity_pos(uid)
+        if pos:
+            self.sfx(name, pos[0], pos[1], vol)
+
+    def champ_sounds(self, e, d, now):
+        """스냅샷 사이의 상태 변화로 나는 소리: 기본 공격, 사망, 부활, 귀환 시작, 스킬 레벨업, 아이템 구매·판매."""
+        old = e.d
+        cid = d["i"]
+        if old is not None:
+            if d["a"] == 2:
+                period = 1.0 / max(0.2, (d.get("s") or {}).get("aspd", 1.0))
+                if old["a"] != 2 or now - e.last_swing > period * 0.9:
+                    e.last_swing = now
+                    self.sfx_unit(cid, self.audio.attack_sound(self.champ_info[cid]["c"], "swing"), ATTACK_SFX_VOL)
+            if d["dead"] and not old["dead"]:
+                self.sfx_unit(cid, "death")
+            elif old["dead"] and not d["dead"]:
+                self.sfx_unit(cid, "respawn")
+            if d.get("rc", 0) > 0 and not old.get("rc", 0):
+                self.sfx_unit(cid, "recall_start")
+        if cid == self.my_id:
+            ranks = d["ab"]
+            if self.my_ranks is not None and any(ranks.get(k, 0) > self.my_ranks.get(k, 0) for k in ranks):
+                self.sfx("skill_up")
+            self.my_ranks = dict(ranks)
+            n = len(d["it"])
+            if self.my_item_count is not None and n != self.my_item_count:
+                self.sfx("ui_buy" if n > self.my_item_count else "ui_sell")
+            self.my_item_count = n
+
+    def dmg_sounds(self, ev):
+        """피해 이벤트: 내가 맞는 소리, 기본 공격이 맞는 소리 (스킬이 맞는 소리는 효과(fx) 이벤트가 맡는다)."""
+        src, dst = ev["s"], ev["d"]
+        if dst == self.my_id and ev["v"] >= 4:
+            self.sfx("hurt")
+        pos = self.entity_pos(dst)
+        if not ev.get("b") or pos is None:
+            return
+        ch = self.champ_info.get(src)
+        if ch:
+            name, vol = self.audio.attack_sound(ch["c"], "hit"), ATTACK_SFX_VOL
+        elif src in self.structs:
+            name, vol = "hit_plate", 0.8
+        else:
+            name, vol = "hit_generic", 0.5 * ATTACK_SFX_VOL
+        self.sfx(name, pos[0], pos[1], vol)
+
+    def cast_sound(self, uid, slot):
+        info = self.champ_info.get(uid)
+        ab = ((gamedata.champion(info["c"]) or {}).get("abilities", {}).get(slot)) if info else None
+        if ab:
+            self.sfx_unit(uid, self.audio.cast_sound(ab))
+
+    def fx_sounds(self, kind, ev):
+        name = self.audio.fx_sound(kind, ev.get("style"))
+        if not name:
+            return
+        if kind == "turret_lock":
+            if ev.get("d") == self.my_id:
+                self.sfx(name)                              # 포탑에 타게팅되면 본인에게만 경고음
+        elif kind == "relic" and ev.get("d") == self.my_id:
+            self.sfx(name)
+        elif kind in ("recall", "flash", "teleport") and "x2" in ev:
+            self.sfx(name, ev["x2"], ev["z2"])          # 도착한 곳에서 소리
+        else:
+            self.sfx(name, ev["x"], ev["z"])
+
+    def cast_fail_reason(self, slot):
+        """지금 이 스킬이 발동하지 않을 이유 (배우지 않음 / 기절·침묵 / 쿨타임 / 마나 부족 / 대상 없음). 쓸 수 있으면 None."""
+        me, data = self.me, self.my_data()
+        if not me or not data or me["dead"]:
+            return None
+        ab = data["abilities"][slot]
+        rank = me["ab"].get(slot, 0)
+        if rank <= 0:
+            return "아직 배우지 않은 스킬입니다"
+        if "stun" in me["st"]:
+            return "기절 상태에서는 스킬을 쓸 수 없습니다"
+        if "silence" in me["st"]:
+            return "침묵 상태에서는 스킬을 쓸 수 없습니다"
+        cd = me["cd"].get(slot, 0)
+        if cd > 0:
+            return f"아직 재사용 대기 중입니다 ({cd:.1f}초)"
+        if me["mp"] < gamedata.rank_value(ab, "mana", rank, 0):
+            return "마나가 부족합니다"
+        if gamedata.aim_mode(ab) == "enemy" and self.aim_enemy(ab.get("range", 0.0)) is None:
+            return "지정한 대상이 없습니다"
+        return None
+
+    def cast_blocked(self, slot):
+        return self.cast_fail_reason(slot) is not None
+
+    def show_cast_msg(self, text):
+        self.cast_msg = (text, time.time() + 1.8)
+
+    def draw_cast_msg(self, surf):
+        """스킬 UI 바로 위에 뜨는 안내 문구 (스킬이 발동하지 않았을 때). 박스 없이 글자만."""
+        if not self.cast_msg:
+            return
+        text, until = self.cast_msg
+        left = until - time.time()
+        if left <= 0:
+            self.cast_msg = None
+            return
+        a = int(255 * min(1.0, left / 0.4))
+        fnt = ui.font(18, True)
+        pos = (HUD_RECT.centerx, HUD_RECT.top - 58)
+        img = fnt.render(text, True, (255, 150, 140))
+        shadow = fnt.render(text, True, (20, 8, 10))
+        img.set_alpha(a)
+        shadow.set_alpha(a)
+        r = img.get_rect(center=pos)
+        for ox, oy in ((-1, 0), (1, 0), (0, -1), (0, 1), (2, 2)):
+            surf.blit(shadow, r.move(ox, oy))
+        surf.blit(img, r)
+
+    def add_fx(self, kind, x, z, dur, radius=1.0, color=(1, 1, 1), **extra):
+        al = 1.0
+        ctx = getattr(self, "fx_ctx", None)
+        if ctx:
+            color, al = fx_color(color, ctx[0], ctx[1])
+        self.fx.append({"kind": kind, "x": x, "z": z, "t": time.time(), "dur": dur, "r": radius, "color": color,
+                        "al": al, **extra})
+
+    def sector_mesh(self, angle_deg):
+        """+Z 방향을 향하는 반지름 1, 각도 angle_deg 의 부채꼴 (스킬 범위 표시용)."""
+        key = max(4, int(round(angle_deg)))
+        mesh = self.sectors.get(key)
+        if mesh is None:
+            b = MeshBuilder()
+            half = math.radians(key) / 2
+            n = max(6, key // 5)
+            up = (0, 1, 0)
+            for i in range(n):
+                a0 = -half + 2 * half * i / n
+                a1 = -half + 2 * half * (i + 1) / n
+                b.tri((0, 0, 0), (math.sin(a0), 0, math.cos(a0)), (math.sin(a1), 0, math.cos(a1)),
+                      (1, 1, 1), up, up, up)
+            mesh = self.sectors[key] = Mesh.from_builder(self.app.renderer, b)
+        return mesh
 
     # ------------------------------------------------------------------ 입력
     def enemy_targetable(self, kind, eid):
@@ -518,6 +1019,8 @@ class GameScene(Scene):
         if kind == "structure":
             st = self.struct_state[eid]
             return self.structs[eid]["tm"] != self.my_team and st[2] and st[3]
+        if kind == "anchor":
+            return any(row[0] == eid and row[1] != self.my_team for row, _ in self.anchors)
         return False
 
     def find_hover(self):
@@ -529,13 +1032,15 @@ class GameScene(Scene):
         cands = []
         for eid, e in self.champs.items():
             if e.visible and e.d and not e.d["dead"]:
-                cands.append(("champion", eid, e.x, e.z, 2.0, HOVER_RADIUS["champion"]))
+                cands.append(("champion", eid, e.x, e.z, getattr(e.ca, "pick_h", 2.0) if e.ca else 2.0, HOVER_RADIUS["champion"]))
         for eid, e in self.minions.items():
             cands.append(("minion", eid, e.x, e.z, MINION_HEIGHT[e.d[1]], HOVER_RADIUS["minion"]))
         for eid, s in self.structs.items():
             if self.struct_state[eid][2]:
                 h = 4.0 if s["k"] == "turret" else 2.0
                 cands.append(("structure", eid, s["x"], s["z"], h, 60 if s["k"] != "turret" else 50))
+        for row, _ in self.anchors:
+            cands.append(("anchor", row[0], row[2], row[3], 1.0, 44))
         for kind, eid, x, z, h, rad in cands:
             # 발밑~머리 위 세로 선분과의 거리로 판정해, 모델 어디를 눌러도 / 조금 빗나가도 잡히게
             a = cam.world_to_screen(x, 0.0, z)
@@ -580,8 +1085,26 @@ class GameScene(Scene):
         if marker:
             self.click_marker = (x, z, time.time())
 
+    def aim_of(self, slot):
+        """슬롯의 스킬 조준 방식 (line/cone/ground/teleport/ally/self)."""
+        data = self.my_data()
+        if not data or slot not in SLOTS:
+            return "line"
+        return gamedata.aim_mode(data["abilities"][slot])
+
+    def aim_target(self, slot):
+        """스킬을 쓸 지점. 먼 거리 순간이동 스킬은 미니맵 위에서도 지정할 수 있다."""
+        mouse = self.mouse_pos()
+        if self.aim_of(slot) == "teleport" and MINIMAP.collidepoint(mouse):
+            return self.minimap_to_world(*mouse)
+        return self.mouse_ground()
+
     def cast_slot(self, slot):
-        x, z = self.mouse_ground()
+        why = self.cast_fail_reason(slot)
+        if why:
+            self.sfx("cast_fail")
+            self.show_cast_msg(why)
+        x, z = self.aim_target(slot)
         self.send_cmd(c="cast", slot=slot, x=round(x, 2), z=round(z, 2))
 
     def handle_event(self, e):
@@ -594,6 +1117,10 @@ class GameScene(Scene):
             self.open_chat()
             return
         if e.type == pygame.KEYDOWN:
+            cheat = {pygame.K_F9: "cheat_lv", pygame.K_F8: "cheat_cd", pygame.K_F7: "cheat_mana", pygame.K_F6: "cheat_hp"}.get(e.key)
+            if cheat:                                             # 테스트용 치트: F9 레벨+1, F8 쿨타임 초기화, F7 마나 최대, F6 체력 최대
+                self.send_cmd(c=cheat)
+                return
             if e.key == pygame.K_ESCAPE:
                 # ESC: 열린 것(상점/조준)을 먼저 닫고, 없으면 설정 창
                 if self.shop_open or self.aiming:
@@ -612,14 +1139,14 @@ class GameScene(Scene):
                     self.send_cmd(c="level", slot=slot)
                     return
                 data = self.my_data()
-                if data and data["abilities"][slot]["type"] == "self_buff":
+                if data and gamedata.is_instant(data["abilities"][slot]):
                     self.cast_slot(slot)
                 else:
                     self.aiming = slot
                 return
             if act in ("D", "F"):
                 x, z = self.mouse_ground()
-                self.send_cmd(c="spell", slot=self.binds.spell_at(act), x=round(x, 2), z=round(z, 2))
+                self.send_cmd(c="spell", slot=act, x=round(x, 2), z=round(z, 2))
             elif act == "stop":
                 self.send_cmd(c="stop")
                 self.move_dest = None
@@ -646,6 +1173,10 @@ class GameScene(Scene):
                 self.aiming = None
         elif e.type == pygame.MOUSEBUTTONDOWN:
             if e.button == 1:
+                if self.aiming and self.aim_of(self.aiming) == "teleport" and MINIMAP.collidepoint(e.pos):
+                    self.cast_slot(self.aiming)         # 미니맵을 눌러 먼 곳으로 시전
+                    self.aiming = None
+                    return
                 if self.click_ui(e.pos):
                     return
                 if self.aiming:
@@ -689,6 +1220,7 @@ class GameScene(Scene):
 
     # ---- 설정 (ESC)
     def open_settings(self):
+        self.sfx("ui_open")
         self.settings_open = True
         self.rebinding = None
         self.aiming = None
@@ -704,16 +1236,44 @@ class GameScene(Scene):
                 self.rebinding = None
             elif e.key == pygame.K_ESCAPE:
                 self.settings_open = False
+                self.sfx("ui_close")
         elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
             self.rebinding = None
+            if self.volume_rect and self.volume_rect.inflate(12, 22).collidepoint(e.pos):
+                self.volume_drag = True
+                self.set_volume_from_mouse(e.pos[0])
+                return
             for kind, rect in self.settings_rects:
                 if rect.collidepoint(e.pos):
                     if kind == "close":
                         self.settings_open = False
+                        self.sfx("ui_close")
+                    elif kind.startswith("tab:"):
+                        if self.settings_tab != kind[4:]:
+                            self.settings_tab = kind[4:]
+                            self.sfx("ui_select")
                     elif kind == "reset":
                         self.binds.reset()
+                        self.sfx("ui_click")
+                    elif kind == "mute":
+                        self.audio.muted = not self.audio.muted
+                        self.audio.save_settings()
+                        self.sfx("ui_toggle")
                     else:
                         self.rebinding = kind
+                        self.sfx("ui_click")
+        elif e.type == pygame.MOUSEMOTION and self.volume_drag:
+            self.set_volume_from_mouse(e.pos[0])
+        elif e.type == pygame.MOUSEBUTTONUP and e.button == 1 and self.volume_drag:
+            self.volume_drag = False
+            self.audio.save_settings()
+            self.sfx("ui_confirm")                      # 바꾼 크기로 들려 준다
+
+    def set_volume_from_mouse(self, mx):
+        r = self.volume_rect
+        self.audio.set_volume((mx - r.x) / max(1, r.width))
+        if self.audio.muted and self.audio.volume > 0:
+            self.audio.muted = False
 
     def draw_settings(self, surf):
         shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
@@ -721,11 +1281,36 @@ class GameScene(Scene):
         surf.blit(shade, (0, 0))
         p = SETTINGS_RECT
         ui.panel(surf, p, (12, 18, 30, 245), ui.BORDER)
-        ui.text(surf, "조작키", (p.x + 24, p.y + 16), 22, bold=True)
-        ui.text(surf, "스킬 레벨업: Ctrl + 스킬 키", (p.right - 24, p.y + 26), 13, ui.TEXT_DIM, anchor="topright")
+        ui.text(surf, "설정", (p.x + 24, p.y + 16), 22, bold=True)
         mouse = ui.mouse_pos()
         self.settings_rects = []
-        y = p.y + 60
+        self.volume_rect = None
+        # 탭: 조작키 / 사운드
+        for i, (tab, label) in enumerate(SETTINGS_TABS):
+            tr = pygame.Rect(p.x + 24 + i * 128, p.y + 56, 120, 32)
+            on = self.settings_tab == tab
+            pygame.draw.rect(surf, (45, 75, 125) if on else ((34, 46, 70) if tr.collidepoint(mouse) else (22, 30, 46)),
+                             tr, border_radius=6)
+            pygame.draw.rect(surf, ui.HIGHLIGHT if on else ui.BORDER, tr, 1, border_radius=6)
+            ui.text(surf, label, tr.center, 16, ui.TEXT if on else ui.TEXT_DIM, anchor="center", bold=on)
+            self.settings_rects.append(("tab:" + tab, tr))
+        pygame.draw.line(surf, ui.BORDER, (p.x + 24, p.y + 96), (p.right - 24, p.y + 96))
+        if self.settings_tab == "sound":
+            self.draw_settings_sound(surf, p, mouse)
+        else:
+            self.draw_settings_keys(surf, p, mouse)
+        buttons = [("close", "닫기", pygame.Rect(p.right - 144, p.bottom - 52, 120, 36))]
+        if self.settings_tab != "sound":
+            buttons.insert(0, ("reset", "기본값", pygame.Rect(p.x + 24, p.bottom - 52, 120, 36)))
+        for kind, label, rect in buttons:
+            pygame.draw.rect(surf, (40, 60, 95) if rect.collidepoint(mouse) else (28, 38, 58), rect, border_radius=6)
+            pygame.draw.rect(surf, ui.BORDER, rect, 1, border_radius=6)
+            ui.text(surf, label, rect.center, 16, anchor="center")
+            self.settings_rects.append((kind, rect))
+
+    def draw_settings_keys(self, surf, p, mouse):
+        ui.text(surf, "스킬 레벨업: Ctrl + 스킬 키", (p.right - 24, p.y + 64), 13, ui.TEXT_DIM, anchor="topright")
+        y = p.y + 112
         for action, label in ACTIONS:
             ui.text(surf, label, (p.x + 30, y + 14), 15, anchor="midleft")
             box = pygame.Rect(p.right - 170, y, 140, 28)
@@ -737,12 +1322,28 @@ class GameScene(Scene):
                     ui.GOLD if waiting else ui.TEXT, anchor="center", bold=not waiting)
             self.settings_rects.append((action, box))
             y += 34
-        for kind, label, rect in (("reset", "기본값", pygame.Rect(p.x + 24, p.bottom - 52, 120, 36)),
-                                  ("close", "닫기", pygame.Rect(p.right - 144, p.bottom - 52, 120, 36))):
-            pygame.draw.rect(surf, (40, 60, 95) if rect.collidepoint(mouse) else (28, 38, 58), rect, border_radius=6)
-            pygame.draw.rect(surf, ui.BORDER, rect, 1, border_radius=6)
-            ui.text(surf, label, rect.center, 16, anchor="center")
-            self.settings_rects.append((kind, rect))
+
+    def draw_settings_sound(self, surf, p, mouse):
+        # 효과음 크기: 막대를 끌어서 바꾸고, 아래 버튼으로 끄고 켠다
+        y = p.y + 124
+        ui.text(surf, "효과음 크기", (p.x + 30, y), 17, bold=True)
+        track = pygame.Rect(p.x + 30, y + 40, 340, 14)
+        self.volume_rect = track
+        pygame.draw.rect(surf, (24, 32, 48), track, border_radius=6)
+        shown = 0.0 if self.audio.muted else self.audio.volume
+        pygame.draw.rect(surf, ui.BORDER, track, 1, border_radius=6)
+        fill = pygame.Rect(track.x, track.y, int(track.width * shown), track.height)
+        if fill.width > 0:
+            pygame.draw.rect(surf, (90, 140, 230) if not self.audio.muted else (80, 85, 100), fill, border_radius=6)
+        pygame.draw.circle(surf, ui.HIGHLIGHT, (track.x + int(track.width * shown), track.centery), 8)
+        ui.text(surf, f"{round(shown * 100)}%", (track.right + 18, track.centery), 16, anchor="midleft")
+        mute_box = pygame.Rect(p.x + 30, y + 84, 160, 34)
+        pygame.draw.rect(surf, (40, 60, 95) if mute_box.collidepoint(mouse) else (24, 32, 48), mute_box, border_radius=4)
+        pygame.draw.rect(surf, ui.BORDER, mute_box, 1, border_radius=4)
+        ui.text(surf, "소리 켜기" if self.audio.muted else "소리 끄기", mute_box.center, 16, anchor="center")
+        self.settings_rects.append(("mute", mute_box))
+        ui.text(surf, "막대를 끌어서 크기를 바꿉니다. 로비와 게임 속 효과음 모두에 적용돼요.", (p.x + 30, y + 140), 14,
+                ui.TEXT_DIM)
 
     def click_ui(self, pos):
         for slot, rect in self.levelup_rects:
@@ -783,8 +1384,17 @@ class GameScene(Scene):
 
     # ------------------------------------------------------------------ 갱신
     def update(self, dt):
-        for e in self.champs.values():
+        for cid, e in self.champs.items():
             e.step(dt)
+            st = e.d["st"] if e.d else ()
+            want = 2.2 if "rope" in st else ((1.1 if not e.ca else 2.0) if "air" in st else 0.0)
+            e.lift += (want - e.lift) * min(1.0, dt * 12.0)
+            if e.d and e.ca is None:
+                e.ca = self.app.models.new_champ_anim(self.champ_info[cid]["c"]) or False
+            if e.ca:
+                e.ca.update(dt, e.d, e)
+                if self.winner is not None and self.champ_info[cid]["tm"] == self.winner and not e.d["dead"]:
+                    e.ca.win()
         for e in self.minions.values():
             e.step(dt)
         self.vis_timer -= dt
@@ -838,6 +1448,18 @@ class GameScene(Scene):
             cam.tx = max(-70, min(70, cam.tx + ex * speed))
             cam.tz = max(-15, min(15, cam.tz + ey * speed))
 
+        self.audio.listener = (cam.tx, cam.tz)
+        d = me.d if me else None
+        if d and not d["dead"] and d["a"] == 1 and "air" not in d["st"]:
+            self.foot_t -= dt
+            if self.foot_t <= 0:
+                self.foot_t = 0.4 / min(1.6, max(0.8, d["s"]["ms"] / 345))
+                self.sfx("footstep")
+        else:
+            self.foot_t = 0.0
+        if self.shop_open != self.shop_was_open:
+            self.shop_was_open = self.shop_open
+            self.sfx("ui_open" if self.shop_open else "ui_close")
         now = time.time()
         self.fx = [f for f in self.fx if now - f["t"] < f["dur"]]
         self.floaters = [f for f in self.floaters if now - f["t"] < f["dur"]]
@@ -852,6 +1474,7 @@ class GameScene(Scene):
         r.draw(m.map, model_matrix())
         now = time.time()
         t = self.app.time
+        self.vfx.tick(now)
 
         # 우물 범위 표시
         for team in (BLUE, RED):
@@ -887,7 +1510,10 @@ class GameScene(Scene):
                 # 포탑 사거리: 내 챔피언이 가까이 있으면 표시
                 me = self.champs.get(self.my_id)
                 if me and s["tm"] != self.my_team and math.hypot(me.x - s["x"], me.z - s["z"]) < mapdata.TURRET_RANGE + 4:
-                    r.draw_transparent(m.ring_thin, model_matrix(s["x"], 0.05, s["z"], scale=mapdata.TURRET_RANGE),
+                    # 서버는 "사거리 + 대상 반지름" 안이면 공격한다. 선의 안쪽 가장자리를 그 거리에 맞추고
+                    # 두께는 바깥쪽으로 그려서, 선을 밟고 있어도 (선 위는 이미 사거리 밖이라) 공격받지 않게 한다.
+                    inner = mapdata.TURRET_RANGE + ((self.my_data() or {}).get("stats", {}).get("radius", 0.55))
+                    r.draw_transparent(m.ring_thin, model_matrix(s["x"], 0.05, s["z"], scale=inner / (1.0 - RING_THIN)),
                                        (1.0, 0.3, 0.25, 0.7))
             if alive and not st[3] and s["tm"] != self.my_team:
                 # 무적 구조물: 보호막
@@ -900,10 +1526,10 @@ class GameScene(Scene):
             r.draw_transparent(m.disc, model_matrix(x, 0.035, z, scale=0.2), (0.6, 0.6, 0.62, 0.35))
             r.draw_transparent(m.ring_thin, model_matrix(x, 0.04, z, scale=0.2), (0.7, 0.7, 0.72, 0.7))
             if active:
-                r.draw_transparent(m.shadow, model_matrix(x, 0.03, z, scale=0.5), (0, 0, 0, 0.3))
+                r.draw_transparent(m.shadow, model_matrix(x, 0.03, z, scale=0.4), (0, 0, 0, 0.3))
                 r.draw(m.relic, model_matrix(x, 0.9 + math.sin(t * 2 + rid) * 0.15, z, rot_y=t * 1.5),
                        emissive=(0.1, 0.45, 0.15))
-                r.draw_transparent(m.ring, model_matrix(x, 0.05, z, scale=0.9), (0.4, 1.0, 0.5, 0.6), additive=True)
+                r.draw_transparent(m.ring, model_matrix(x, 0.05, z, scale=0.5), (0.4, 1.0, 0.5, 0.6), additive=True)
 
         # 미니언
         for mid, e in self.minions.items():
@@ -911,11 +1537,26 @@ class GameScene(Scene):
             code, team, anim = row[1], row[2], row[8]
             key = MINION_KEYS[code]
             bob = abs(math.sin(t * 9 + mid)) * 0.08 if anim == 1 else 0.0
+            if code == 4:                                          # 새끼 거미: 통통 튀지 않고 다리를 움직이며 달린다
+                bob = 0.0
+                if anim == 1:
+                    key = "minion_spiderling_walk"
             rot = facing_to_rot(e.f)
             rad = MINION_RADIUS[code]
             r.draw_transparent(m.shadow, model_matrix(e.x, 0.03, e.z, scale=rad * 1.1), (0, 0, 0, 0.3))
+            if code == 4:                                          # 새끼 거미는 작아서 발밑 팀 색 고리로 편을 구분
+                r.draw_transparent(m.ring, model_matrix(e.x, 0.05, e.z, scale=0.5),
+                                   (0.3, 0.6, 1.0, 0.8) if team == self.my_team else (1.0, 0.3, 0.3, 0.8))
             emis = (0.2, 0.2, 0.2) if mid == hov_id else (0, 0, 0)
-            r.draw(m.team_meshes[team][key], model_matrix(e.x, bob, e.z, rot_y=rot), emissive=emis)
+            mesh_ = m.team_meshes[team][key]
+            if isinstance(mesh_, list):                        # 새끼 거미: 거미 여왕과 같은 걸음의 한 주기를 돌려 가며 그린다
+                mesh_ = mesh_[int(((t + mid * 0.137) % BABY_PERIOD) / BABY_PERIOD * len(mesh_)) % len(mesh_)]
+            tilt, hop = 0.0, 0.0
+            if code == 4 and now - e.swing_t < 0.4:                # 새끼 거미 공격: 앞을 들었다가 내리찍는다 (메인 거미 평타처럼)
+                k = (now - e.swing_t) / 0.4
+                tilt = BABY_ATTACK_TILT * math.sin(math.pi * k) * (1.0 if k < 0.55 else 0.6)
+                hop = 0.05 * math.sin(math.pi * k)
+            r.draw(mesh_, model_matrix(e.x, bob + hop, e.z, rot_y=rot, rot_x=tilt), emissive=emis)
             weapon = m.minion_weapons[team].get(key)
             if weapon:
                 # 무기는 손을 축으로 따로 그려, 공격할 때 뒤로 젖혔다가 앞으로 휘두른다
@@ -928,36 +1569,117 @@ class GameScene(Scene):
         # 챔피언
         for cid, e in self.champs.items():
             d = e.d
-            if not d or d["dead"] or not e.visible:
+            if not d or not e.visible:
                 continue
             info = self.champ_info[cid]
             mesh = m.champion(info["c"])
+            ca = e.ca or None
+            if d["dead"]:
+                # 죽은 뒤 잠깐 쓰러진 모습을 보여 주고 서서히 사라진다
+                if ca and ca.corpse_visible:
+                    if ca.is_rig:
+                        ca.draw(r, (1.0, 1.0, 1.0, ca.alpha))
+                    else:
+                        r.draw(mesh, model_matrix(e.x, 0.0, e.z, rot_y=facing_to_rot(e.f)),
+                               tint=(1.0, 1.0, 1.0, ca.alpha), bones=ca.bones())
+                continue
+            st = d["st"]
+            self.vfx.status(st, e.x, e.z, e.lift, info["tm"] == self.my_team, d.get("sh", 0) > 0)
             if cid == self.my_id:
                 ring_col = (0.6, 1.0, 0.3, 0.9)
             elif info["tm"] == self.my_team:
                 ring_col = (0.3, 0.6, 1.0, 0.85)
             else:
                 ring_col = (1.0, 0.3, 0.3, 0.85)
-            r.draw_transparent(m.shadow, model_matrix(e.x, 0.03, e.z, scale=0.65), (0, 0, 0, 0.35))
+            lift = e.lift
+            big = 1.6 if (ca and ca.is_rig) else 1.0           # 거미 같은 큰 몸은 그림자도 크게
+            if big > 1:
+                lift = ca.lift * SC_RIG + e.lift               # 점프 중 높이는 리그가 직접 계산한다 (+ 에어본)
+            r.draw_transparent(m.shadow, model_matrix(e.x, 0.03, e.z, scale=0.65 * big), (0, 0, 0, 0.35 / (1 + lift)))
             r.draw_transparent(m.ring, model_matrix(e.x, 0.05, e.z, scale=0.85), ring_col)
             anim = d["a"]
             bob = abs(math.sin(t * 10 + cid)) * 0.06 if anim == 1 else 0.0
             tilt = 0.08 if anim == 1 else 0.0
-            tint = (1, 1, 1, 1)
+            if ca:
+                bob = tilt = 0.0           # 몸 움직임은 뼈대 동작이 맡는다
+            tint = [1.0, 1.0, 1.0, 1.0]
             emis = [0.0, 0.0, 0.0]
-            if "slow" in d["st"]:
-                tint = (0.75, 0.85, 1.15, 1)
-            if "buff" in d["st"]:
+            if "slow" in st:
+                tint = [0.75, 0.85, 1.15, 1.0]
+            if "silence" in st:
+                tint = [tint[0] * 0.85, tint[1] * 0.7, tint[2] * 1.1, 1.0]
+            if "root" in st:
+                tint = [tint[0] * 0.8, tint[1] * 0.95, tint[2] * 0.7, 1.0]
+            if "ghost" in st:
+                tint = [0.65, 1.0, 0.9, 0.55]
+            if "buff" in st:
                 emis = [0.05, 0.12, 0.25]
+            if "vamp" in st:
+                emis[0] += 0.25
+                emis[2] += 0.05
+            if "pierce" in st:
+                emis[1] += 0.03
+                emis[2] += 0.05
+            if "air" in st and not ca:
+                tilt = 0.35 * math.sin(t * 9)
             if cid == hov_id:
                 emis = [v + 0.15 for v in emis]
-            r.draw(mesh, model_matrix(e.x, bob, e.z, rot_y=facing_to_rot(e.f), rot_x=tilt), tint=tint,
-                   emissive=emis)
-            if "stun" in d["st"]:
+            if ca and ca.is_rig:
+                r.y_offset = e.lift + (0.12 * math.sin(t * 6 + cid) * min(1.0, e.lift) if e.lift > 0.05 else 0.0)
+                ca.draw(r, tuple(tint), emis)
+                r.y_offset = 0.0
+            else:
+                r.draw(mesh, model_matrix(e.x, bob + lift, e.z, rot_y=facing_to_rot(e.f), rot_x=tilt), tint=tuple(tint),
+                       emissive=emis, bones=ca.bones() if ca else None)
+            head = 2.15 + lift
+            if "stun" in st:
                 for k in range(3):
                     a = t * 5 + k * math.tau / 3
-                    r.draw(m.orb, model_matrix(e.x + math.cos(a) * 0.4, 2.15, e.z + math.sin(a) * 0.4, scale=0.08),
+                    r.draw(m.orb, model_matrix(e.x + math.cos(a) * 0.4, head, e.z + math.sin(a) * 0.4, scale=0.08),
                            tint=(1, 0.9, 0.3, 1), unlit=1.0)
+            if "silence" in st:
+                r.draw_transparent(m.ring, model_matrix(e.x, head + 0.05, e.z, scale=0.38, rot_y=t * 3),
+                                   (0.75, 0.5, 1.0, 0.95), additive=True)
+                r.draw_transparent(m.ring, model_matrix(e.x, head + 0.12, e.z, scale=0.25, rot_y=-t * 3),
+                                   (0.9, 0.7, 1.0, 0.8), additive=True)
+            if "root" in st:
+                r.draw_transparent(m.ring, model_matrix(e.x, 0.07, e.z, scale=0.6), (0.5, 0.75, 0.3, 0.9))
+                for k in range(6):
+                    a = k / 6 * math.tau + 0.3
+                    r.draw(m.relic, model_matrix(e.x + math.cos(a) * 0.5, 0.25, e.z + math.sin(a) * 0.5, scale=0.55,
+                                                 rot_y=a), tint=(0.5, 0.75, 0.3, 1))
+            if "marked" in st:
+                for j in range(2):
+                    ph = (t * 1.4 + j * 0.5) % 1.0
+                    r.draw_transparent(m.ring, model_matrix(e.x, 1.0 + lift, e.z, scale=0.4 + ph * 0.5),
+                                       (1.0, 0.8, 0.35, 0.9 * (1 - ph)), additive=True)
+            if d.get("sh", 0) > 0 or "undying" in st or "counter" in st:
+                if "undying" in st:
+                    sc, col = (1.0, 0.86, 0.35, 0.3 + 0.08 * math.sin(t * 10)), 1.05
+                elif "counter" in st:
+                    sc, col = (1.0, 0.72, 0.3, 0.2), 0.95
+                else:
+                    sc, col = (0.7, 0.9, 1.0, 0.17), 0.9
+                sc = (*fx_color(sc[:3], info["tm"] == self.my_team, False)[0], sc[3])      # 아군 파랑 / 적 빨강
+                r.draw_transparent(m.orb, model_matrix(e.x, 1.0 + lift, e.z, scale=col), sc, additive=True)
+            if "echo" in st:
+                r.draw_transparent(m.orb, model_matrix(e.x, 1.0 + lift, e.z, scale=0.85), (*fx_color((0.9, 0.6, 0.25), info["tm"] == self.my_team, False)[0], 0.13),
+                                   additive=True)
+            if "immune" in st:
+                r.draw_transparent(m.orb, model_matrix(e.x, 1.0 + lift, e.z, scale=0.9), (1.0, 1.0, 1.0, 0.13),
+                                   additive=True)
+            rp = d.get("rp")
+            if rp:
+                # 외줄: 두 말뚝 사이에 팽팽하게 걸린 줄
+                dx, dz = rp[2] - rp[0], rp[3] - rp[1]
+                ang = math.atan2(dx, dz)
+                r.draw(self.beam, model_matrix(rp[0], 2.15, rp[1], rot_y=ang, sx=0.06, sy=0.06, sz=math.hypot(dx, dz)),
+                       tint=(0.85, 0.7, 0.42, 1), unlit=0.6)
+                for px, pz in ((rp[0], rp[1]), (rp[2], rp[3])):
+                    r.draw(self.pillar, model_matrix(px, 0.0, pz, sx=0.08, sy=2.2, sz=0.08), tint=(0.5, 0.34, 0.2, 1))
+            if "emp" in st:
+                r.draw_transparent(m.orb, model_matrix(e.x, 1.0 + lift, e.z, scale=0.9), (0.5, 0.85, 1.0, 0.18),
+                                   additive=True)
             if d.get("rc", 0) > 0:
                 # 귀환 중: 발밑 원 + 위로 올라가는 고리
                 k = 1 - d["rc"] / RECALL_TIME
@@ -967,59 +1689,176 @@ class GameScene(Scene):
                     ph = (t * 0.8 + j * 0.5) % 1.0
                     r.draw_transparent(m.ring, model_matrix(e.x, 0.1 + ph * 2.2, e.z, scale=0.9),
                                        (0.45, 0.7, 1.0, 0.8 * (1 - ph)), additive=True)
-            if "emp" in d["st"]:
-                r.draw_transparent(m.orb, model_matrix(e.x, 1.0, e.z, scale=0.9), (0.5, 0.85, 1.0, 0.18), additive=True)
 
         # 투사체
         for p in self.projs.values():
             age = min(0.15, now - p["t"])
             x, z = p["x"] + p["vx"] * age, p["z"] + p["vz"] * age
+            if p["style"] == "tornado":                           # 용의 회오리: 겹겹이 도는 반투명 원뿔대
+                self.draw_tornado(r, m, x, z, t)
+                self.vfx.projectile(p, x, 1.0, z, p["team"] == self.my_team)
+                continue
             mesh = m.proj.get(p["style"], m.proj["minion_bolt"])
-            y = 3.2 if p["style"] == "turret_shot" else 1.1
-            if p["style"] in ("minion_bolt", "cannon_ball"):
-                y = 0.8
+            y, emis = PROJ_LOOK.get(p["style"], (1.1, None))
+            emis = emis or (0, 0, 0)
             rot = math.atan2(p["dx"], p["dz"])
-            emis = (0.3, 0.3, 0.3) if p["style"] in ("frost_arrow", "turret_shot", "snowball") else (0, 0, 0)
             tint = (1, 1, 1, 1)
-            if p["style"] in ("minion_bolt", "cannon_ball"):
-                # 미니언 투사체는 팀 색 (블루 / 레드)
+            if p["style"] not in ("minion_bolt", "cannon_ball", "turret_shot", "turret_shot_2", "turret_shot_3", "fire_bolt"):
+                # 챔피언 투사체: 아군은 푸른 빛, 적은 붉은 빛을 더한다
+                if p["team"] == self.my_team:
+                    tint, emis = (0.8, 0.9, 1.0, 1), tuple(min(1.0, e + g) for e, g in zip(emis, (0.04, 0.16, 0.42)))
+                else:
+                    tint, emis = (1.0, 0.8, 0.78, 1), tuple(min(1.0, e + g) for e, g in zip(emis, (0.42, 0.07, 0.05)))
+            if p["style"] in ("minion_bolt", "cannon_ball", "turret_shot", "turret_shot_2", "turret_shot_3"):
+                # 미니언·포탑 투사체는 팀 색 (블루 / 레드)
                 tint = (0.4, 0.65, 1.0, 1) if p["team"] == BLUE else (1.0, 0.4, 0.35, 1)
                 emis = (0.1, 0.2, 0.45) if p["team"] == BLUE else (0.45, 0.12, 0.1)
-            r.draw(mesh, model_matrix(x, y, z, rot_y=rot), tint=tint, emissive=emis)
+            r.draw(mesh, model_matrix(x, y, z, rot_y=rot, scale=PROJ_SCALE.get(p["style"], 1.3)), tint=tint, emissive=emis)
+            if p["style"] not in ("minion_bolt", "cannon_ball"):       # 미니언 투사체는 꼬리·빛 없이 구만
+                self.vfx.projectile(p, x, y, z, p["team"] == self.my_team)
 
-        # 장판 (궁극기 예고 등)
+        # 장판 (스킬 예고 등)
         for row, recv in self.ground_effects:
             eid, style, team, x, z, radius, remaining = row
             left = remaining - (now - recv)
+            total = max(0.05, self.ef_total.get(eid, 0.8))
+            prog = 1 - max(0.0, left) / total
             pulse = 0.25 + 0.15 * math.sin(t * 12)
-            col = (0.6, 0.9, 1.0) if team == self.my_team else (1.0, 0.45, 0.35)
-            r.draw_transparent(m.disc, model_matrix(x, 0.06, z, scale=radius), (*col, pulse))
-            r.draw_transparent(m.ring, model_matrix(x, 0.07, z, scale=radius), (*col, 0.9))
+            col, al = fx_color((0.75, 0.9, 1.0) if team == self.my_team else (1.0, 0.45, 0.35), team == self.my_team,
+                               style in SUPPORT_ZONES)
+            r.draw_transparent(m.disc, model_matrix(x, 0.06, z, scale=radius), (*col, pulse * al))
+            r.draw_transparent(m.ring, model_matrix(x, 0.07, z, scale=radius), (*col, 0.9 * al))
             if left > 0:
-                r.draw_transparent(m.disc, model_matrix(x, 0.08, z, scale=radius * max(0.0, 1 - left / 0.8)),
-                                   (*col, 0.35))
+                r.draw_transparent(m.disc, model_matrix(x, 0.08, z, scale=radius * max(0.0, prog)), (*col, 0.35 * al))
+            if style == "bell" and left > 0:
+                # 하늘에서 떨어지는 대종
+                r.draw(m.bell, model_matrix(x, 12.0 * (1 - prog) ** 2, z, scale=radius / 1.05), tint=(1, 1, 1, 1),
+                       emissive=(0.12, 0.08, 0.02))
+
+        # 오래 남는 장판: 성역 / 대자연의 정원 / 사냥 덫 / 대종 감옥
+        for row, recv in self.zones:
+            zid, style, team, x, z, radius, remaining, total = row
+            left = remaining - (now - recv)
+            if left <= 0:
+                continue
+            ally = team == self.my_team
+            if style == "sanctuary":
+                col, al = fx_color((1.0, 0.92, 0.55), ally, True)
+                r.draw_transparent(m.disc, model_matrix(x, 0.06, z, scale=radius),
+                                   (*col, (0.2 + 0.06 * math.sin(t * 4)) * al * 1.6))
+                r.draw_transparent(m.ring, model_matrix(x, 0.07, z, scale=radius), (*col, 0.9 * al))
+                r.draw_transparent(m.ring_thin, model_matrix(x, 0.08, z, scale=radius * (0.55 + 0.05 * math.sin(t * 3)),
+                                                             rot_y=t), (*col, 0.6 * al), additive=True)
+                for i in range(9):
+                    ph = (t * 0.5 + i / 9) % 1.0
+                    a = i * 2.4 + x
+                    rr = radius * (0.2 + 0.7 * ((i * 37) % 10) / 10)
+                    r.draw_transparent(m.orb, model_matrix(x + math.cos(a) * rr, ph * 2.4, z + math.sin(a) * rr,
+                                                           scale=0.07), (*col, 0.85 * (1 - ph) * al), additive=True)
+            elif style == "garden":
+                col, al = fx_color((0.5, 1.0, 0.5), ally, True)
+                r.draw_transparent(m.disc, model_matrix(x, 0.06, z, scale=radius),
+                                   (*col, (0.17 + 0.05 * math.sin(t * 3)) * al * 1.6))
+                r.draw_transparent(m.ring, model_matrix(x, 0.07, z, scale=radius), (*col, 0.9 * al))
+                for i in range(14):
+                    a = i * 2.4 + z
+                    rr = radius * (0.25 + 0.7 * ((i * 53) % 10) / 10)
+                    px, pz = x + math.cos(a) * rr, z + math.sin(a) * rr
+                    flower = (1.0, 0.62, 0.78) if i % 3 else (1.0, 0.88, 0.4)
+                    r.draw(m.orb, model_matrix(px, 0.1 + 0.03 * math.sin(t * 2 + i), pz, scale=0.1), tint=(*flower, 1.0),
+                           unlit=0.6)
+                    r.draw(m.relic, model_matrix(px, 0.2, pz, scale=0.35, rot_y=i), tint=(0.45, 0.8, 0.35, 1))
+                for i in range(6):
+                    ph = (t * 0.45 + i / 6) % 1.0
+                    a = i * 1.7 + 0.5
+                    r.draw_transparent(m.orb, model_matrix(x + math.cos(a) * radius * 0.6, ph * 2.6,
+                                                           z + math.sin(a) * radius * 0.6, scale=0.07),
+                                       (*col, 0.8 * (1 - ph) * al), additive=True)
+            elif style == "web":                                # 독 거미줄 둥지 (거미 여왕): 바닥 거미줄 + 독 방울
+                col = fx_color((0.7, 0.95, 0.35), ally, False)[0]
+                self.vfx.web_zone(x, z, radius, ally, left, total)
+            elif style == "venom":                              # 독 웅덩이 (이무기): 끈적한 독액 바닥 + 거품
+                self.vfx.venom_zone(x, z, radius, ally, left, total)
+            elif style == "fire":                               # 불길 웅덩이 (용): 그을린 바닥 + 용암 균열 + 불꽃
+                self.vfx.fire_zone(x, z, radius, ally, left, total)
+            elif style == "trap":
+                r.draw(m.trap, model_matrix(x, 0.0, z, rot_y=zid), emissive=(0.05, 0.05, 0.08))
+                r.draw_transparent(m.ring_thin, model_matrix(x, 0.06, z, scale=radius),
+                                   (*fx_color((0.95, 0.85, 0.5), ally, False)[0], 0.55))
+            elif style == "cage":
+                col = fx_color((1.0, 0.72, 0.3), ally, False)[0]
+                r.draw_transparent(m.disc, model_matrix(x, 0.06, z, scale=radius), (*col, 0.18 + 0.05 * math.sin(t * 6)))
+                r.draw_transparent(m.ring, model_matrix(x, 0.07, z, scale=radius), (*col, 0.95))
+                r.draw_transparent(m.ring_thin, model_matrix(x, 0.08, z, scale=radius * max(0.05, left / max(0.1, total))),
+                                   (*fx_color((1.0, 0.92, 0.55), ally, False)[0], 0.8), additive=True)
+                r.draw_transparent(m.bell, model_matrix(x, 0.0, z, scale=radius / 1.05), (1.0, 1.0, 1.0, 0.42),
+                                   unlit=0.15)
+
+        # 줄 말뚝
+        for row, recv in self.anchors:
+            aid, team, x, z, hp, remaining = row[:6]
+            cocoon = len(row) > 6 and row[6] == 1
+            left = remaining - (now - recv)
+            if cocoon:                                      # 새끼 거미 고치: 부화가 가까울수록 흔들리고 커진다
+                total = max(0.1, row[7])
+                p = max(0.0, min(1.0, 1.0 - left / total))
+                wob = math.sin(t * (8 + 24 * p)) * 0.12 * p
+                r.draw_transparent(m.shadow, model_matrix(x, 0.03, z, scale=0.6), (0, 0, 0, 0.3))
+                r.draw_transparent(m.ring, model_matrix(x, 0.05, z, scale=0.8),
+                                   (0.3, 0.6, 1.0, 0.85) if team == self.my_team else (1.0, 0.3, 0.3, 0.85))
+                r.draw(m.cocoon, model_matrix(x, 0.0, z, rot_y=aid, rot_x=wob, scale=1.0 + 0.12 * p * math.sin(t * 20)),
+                       emissive=(0.12 + 0.35 * p * p + (0.2 if aid == hov_id else 0), 0.07 + 0.2 * p * p, 0.02))
+                continue
+            if left < 1.0 and int(t * 10) % 2 == 0:
+                continue                                    # 사라지기 직전에는 깜빡임
+            ally = team == self.my_team
+            r.draw_transparent(m.shadow, model_matrix(x, 0.03, z, scale=0.4), (0, 0, 0, 0.3))
+            r.draw_transparent(m.ring, model_matrix(x, 0.05, z, scale=0.75),
+                               (0.3, 0.6, 1.0, 0.85) if ally else (1.0, 0.3, 0.3, 0.85))
+            r.draw(m.anchor, model_matrix(x, 0.0, z, rot_y=aid), emissive=(0.2, 0.2, 0.2) if aid == hov_id else (0, 0, 0))
 
         # 로컬 이펙트
         for f in self.fx:
             k = (now - f["t"]) / f["dur"]
             col = f["color"]
+            al = f.get("al", 1.0)
             if f["kind"] == "burst":
                 r.draw_transparent(m.disc, model_matrix(f["x"], 0.09, f["z"], scale=f["r"] * (0.4 + 0.6 * k)),
-                                   (*col, 0.6 * (1 - k)), additive=True)
+                                   (*col, 0.6 * (1 - k) * min(1.0, 3.5 / max(1.0, f["r"])) * al), additive=True)
                 r.draw_transparent(m.ring, model_matrix(f["x"], 0.1, f["z"], scale=f["r"] * (0.6 + 0.6 * k)),
-                                   (*col, 1 - k), additive=True)
+                                   (*col, (1 - k) * al), additive=True)
             elif f["kind"] == "ring_up":
                 r.draw_transparent(m.ring, model_matrix(f["x"], 0.1 + k * 1.5, f["z"], scale=f["r"] * (1 - 0.3 * k)),
-                                   (*col, 1 - k), additive=True)
+                                   (*col, (1 - k) * al), additive=True)
             elif f["kind"] == "poof":
                 r.draw_transparent(m.orb, model_matrix(f["x"], 1.0, f["z"], scale=0.25 + k * 0.6),
-                                   (*col, 0.6 * (1 - k)), additive=True)
+                                   (*col, 0.6 * (1 - k) * al), additive=True)
             elif f["kind"] == "shards":
+                tc = (min(1.4, col[0] * 0.5 + 0.55), min(1.4, col[1] * 0.5 + 0.55), min(1.4, col[2] * 0.5 + 0.55), 1)
                 for i in range(10):
                     a = i / 10 * math.tau + f["x"]
                     rr = f["r"] * (0.2 + 0.8 * ((i * 37) % 10) / 10)
                     r.draw(m.relic, model_matrix(f["x"] + math.cos(a) * rr, (1 - k) * 2.5, f["z"] + math.sin(a) * rr,
-                                                 scale=0.4, rot_y=a), tint=(0.8, 0.95, 1.2, 1), emissive=(0.3, 0.4, 0.5))
+                                                 scale=0.4, rot_y=a), tint=tc, emissive=(0.3, 0.4, 0.5))
+            elif f["kind"] == "line":
+                dx, dz = f["x2"] - f["x"], f["z2"] - f["z"]
+                w = f.get("w", 1.0) * (1.0 - 0.4 * k)
+                r.draw_transparent(self.beam, model_matrix(f["x"], 0.1, f["z"], rot_y=math.atan2(dx, dz), sx=w, sy=0.06,
+                                                           sz=math.hypot(dx, dz)), (*col, 0.6 * (1 - k) * al), additive=True)
+            elif f["kind"] == "sector":
+                r.draw_transparent(self.sector_mesh(f["w"]), model_matrix(f["x"], 0.1, f["z"], rot_y=facing_to_rot(f["a"]),
+                                                                          scale=f["r"] * (0.6 + 0.4 * min(1.0, k * 3))),
+                                   (*col, 0.55 * (1 - k) * al), additive=True)
+            elif f["kind"] == "pillar":
+                h = f.get("h", 8.0)
+                r.draw_transparent(self.pillar, model_matrix(f["x"], 0.0, f["z"], sx=f["r"] * (1 - 0.5 * k), sy=h,
+                                                             sz=f["r"] * (1 - 0.5 * k)), (*col, 0.5 * (1 - k) * al),
+                                   additive=True)
+            elif f["kind"] == "bell_lift":
+                r.draw_transparent(m.bell, model_matrix(f["x"], k * 10.0, f["z"], scale=f["r"] / 1.05),
+                                   (1.0, 1.0, 1.0, 0.45 * (1 - k)), unlit=0.15)
+
+        self.vfx.draw(cam)
 
         # 클릭 표시 (줄어드는 고리) + 도착할 때까지 남는 목적지 표시
         if self.click_marker:
@@ -1037,6 +1876,7 @@ class GameScene(Scene):
             r.draw_transparent(m.ring, model_matrix(x, 0.06, z, scale=0.32), (*MOVE_COLOR, pulse), additive=True)
             r.draw_transparent(m.disc, model_matrix(x, 0.055, z, scale=0.08), (*MOVE_COLOR, 0.9), additive=True)
 
+        self.draw_leap_marks()
         self.draw_indicators()
 
     @staticmethod
@@ -1052,9 +1892,94 @@ class GameScene(Scene):
             return -0.7 + 2.0 * (1 - (1 - p) ** 2)
         return 1.3 * (1 - (k - 0.55) / 0.45)
 
+    def cursor_kind(self):
+        """평상시 손, 공격할 수 있는 대상 위(또는 공격 이동 대기) 칼, 대상 지정 스킬 조준 중 조준경."""
+        if self.settings_open or self.chat_open:
+            return "default"
+        mouse = self.mouse_pos()
+        if self.aiming and self.aiming in SLOTS and self.aim_of(self.aiming) in ("enemy", "ally"):
+            return "target"
+        if HUD_RECT.collidepoint(mouse) or MINIMAP.collidepoint(mouse) or (self.shop_open and self.shop_panel().collidepoint(mouse)):
+            return "default"
+        if self.amove_pending:
+            return "attack"
+        hov = self.hover
+        if hov and self.me and not self.me["dead"] and self.enemy_targetable(*hov):
+            return "attack"
+        return "default"
+
+    def aim_enemy(self, rng):
+        """마우스에 가장 가까운 (사거리 안, 보이는) 적 챔피언 — 서버의 pick_enemy_champion 과 같은 규칙."""
+        me = self.champs.get(self.my_id)
+        if not me:
+            return None
+        mx, mz = self.mouse_ground()
+        best, bd = None, 1e9
+        for cid, e in self.champs.items():
+            if not e.visible or not e.d or e.d["dead"] or self.champ_info[cid]["tm"] == self.my_team:
+                continue
+            if math.hypot(e.x - me.x, e.z - me.z) > rng + 0.6:
+                continue
+            dd = math.hypot(e.x - mx, e.z - mz)
+            if dd < bd:
+                best, bd = e, dd
+        return best
+
+    def draw_slam_area(self, x, z, ab, col, strength=1.0, rings=True):
+        """내려찍기 범위: 안쪽 = 광역 피해, 바깥쪽(더 넓고 연함) = 장판."""
+        m = self.app.models
+        r = self.app.renderer
+        zr = (ab.get("zone") or {}).get("radius", 0.0)
+        if zr > 0:
+            r.draw_transparent(m.disc, model_matrix(x, 0.05, z, scale=zr), (*col, 0.07 * strength))
+            if rings:
+                r.draw_transparent(m.ring_hair, model_matrix(x, 0.06, z, scale=zr), (*col, 0.35 * strength))
+        br = ab.get("radius", 0.0)
+        if br > 0:
+            r.draw_transparent(m.disc, model_matrix(x, 0.07, z, scale=br), (*col, 0.2 * strength))
+            if rings:
+                r.draw_transparent(m.ring_hair, model_matrix(x, 0.08, z, scale=br), (*col, 0.9 * strength))
+
+    TORNADO_S = 0.3                                          # 원본 회오리(반지름 약 5)를 이 게임 크기로 줄이는 배율
+
+    def draw_tornado(self, r, m, x, z, t):
+        """보스러시 용의 회오리 (9겹, 겹마다 색이 번갈고 투명도가 줄며, 겹마다 다른 속도로 돈다). 가산 합성."""
+        s = self.TORNADO_S
+        r.prog["u_dbl"].value = True
+        for i, mesh in enumerate(m.tornado_layers):
+            k = i / 8
+            spin = t * 9 * (1 + i * 0.18)
+            sway = math.sin(t * 5.4 + i * 0.7) * 0.075 * i * s
+            col = (0.875, 0.918, 1.0) if i % 2 else (0.66, 0.74, 0.86)
+            r.draw_transparent(mesh, model_matrix(x + sway, (0.05 + i * 0.95) * s, z, rot_y=spin, sx=s, sy=0.95 * s, sz=s),
+                               (*col, (0.5 - 0.22 * k) * 0.85), additive=True)
+        r.prog["u_dbl"].value = False
+
+    def draw_leap_marks(self):
+        """덮쳐 내려찍기 도약 중: 착지할 자리(대상 위치)에 피해 범위와 장판 범위를 보여 준다."""
+        now = time.time()
+        for cid in list(self.leap_marks):
+            mk = self.leap_marks[cid]
+            if now > mk["end"]:
+                del self.leap_marks[cid]
+                continue
+            tg = self.champs.get(mk["tg"]) if mk.get("tg") is not None else None
+            x, z = (tg.x, tg.z) if tg is not None else (mk["x"], mk["z"])
+            ally = mk["tm"] == self.my_team
+            col = (0.5, 0.8, 1.0) if ally else (1.0, 0.4, 0.3)
+            pulse = 0.75 + 0.25 * math.sin(now * 14)
+            if "ox" in mk:                                   # 지나갈 길: 바깥 바(넓음, 연함) + 안쪽 바(2배 피해, 진함)
+                dx, dz = mk["x"] - mk["ox"], mk["z"] - mk["oz"]
+                ln, a = math.hypot(dx, dz), math.atan2(dx, dz)
+                r = self.app.renderer
+                r.draw_transparent(self.quad, model_matrix(mk["ox"], 0.05, mk["oz"], rot_y=a, sx=mk["w"], sy=1, sz=ln), (*col, 0.12 * pulse))
+                r.draw_transparent(self.quad, model_matrix(mk["ox"], 0.055, mk["oz"], rot_y=a, sx=mk["w2"], sy=1, sz=ln), (*col, 0.2 * pulse))
+            self.draw_slam_area(x, z, {"radius": mk["r"], "zone": {"radius": mk["zr"]}}, col, pulse, rings=False)
+
     def draw_indicators(self):
         r = self.app.renderer
         m = self.app.models
+        self.ind_range = None               # 미니맵에 같이 보여줄 사거리 (x, z, 반지름, 색)
         me = self.champs.get(self.my_id)
         if not me or not me.d or me.d["dead"]:
             return
@@ -1064,44 +1989,151 @@ class GameScene(Scene):
             if data:
                 rng = data["stats"]["attack_range"] + 0.55
             r.draw_transparent(m.ring_thin, model_matrix(me.x, 0.06, me.z, scale=rng), (1.0, 0.5, 0.4, 0.8))
+            self.ind_range = (me.x, me.z, rng, (1.0, 0.5, 0.4))
         # 조준 중인 스킬, 아니면 마우스를 올린 스킬 아이콘의 범위와 조준 바를 보여준다 (롤과 같은 방식)
         slot = self.aiming or self.hover_slot
         if not slot:
             return
-        spell = self.binds.spell_at(slot) if slot in ("D", "F") else None
-        if spell == "D":
+        spell = None
+        if slot in ("D", "F"):
+            spell = (me.d.get("spl") or DEFAULT_SPELLS)[0 if slot == "D" else 1]
+        if spell == "flash":
             ab = {"type": "dash", "range": FLASH_RANGE, "width": 0.0}
-        elif spell == "F":
+        elif spell == "mark":
             ab = {"type": "skillshot", "range": MARK_RANGE, "width": 0.7}
+        elif spell:
+            sp = SPELLS[spell]
+            ab = {"type": "spell", "aim": "enemy" if sp["aim"] == "enemy" else "self",
+                  "range": sp.get("range", 0.0), "radius": sp.get("radius")}
         else:
             ab = self.my_data()["abilities"][slot]
-        mx, mz = self.mouse_ground()
+        mode = gamedata.aim_mode(ab)
+        key = slot
+        mx, mz = self.aim_target(slot) if not spell else self.mouse_ground()
         dx, dz = mx - me.x, mz - me.z
         dist = math.hypot(dx, dz) or 1.0
         ang = math.atan2(dx, dz)
         # 재사용 대기 중이면 빨간색
-        cd = me.d["cd"].get(spell or slot, 0) if me.d else 0
-        if spell == "F" and me.d and me.d["mk"]:
+        cd = me.d["cd"].get(key, 0) if me.d else 0
+        if spell == "mark" and me.d and me.d["mk"]:
             cd = 0                          # 표식 적중 후 돌진(재사용)은 가능
-        col = (1.0, 0.32, 0.28) if cd > 0 else (0.55, 0.85, 1.0)
-        if ab["type"] in ("skillshot", "dash"):
-            r.draw_transparent(m.ring_thin, model_matrix(me.x, 0.06, me.z, scale=ab["range"]), (*col, 0.45))
-            length = ab["range"] if ab["type"] == "skillshot" else min(dist, ab["range"])
-            width = ab.get("width", 0.9)
-            if width > 0:
-                r.draw_transparent(self.quad, model_matrix(me.x, 0.07, me.z, rot_y=ang, sx=width, sy=1, sz=length),
-                                   (*col, 0.35))
-            if ab["type"] == "dash":
-                ex, ez = me.x + dx / dist * length, me.z + dz / dist * length
-                r.draw_transparent(m.ring, model_matrix(ex, 0.08, ez, scale=0.6), (*col, 0.9))
-        elif ab["type"] == "self_buff":
-            r.draw_transparent(m.ring, model_matrix(me.x, 0.07, me.z, scale=1.2), (*col, 0.8))
-        elif ab["type"] == "ground_aoe":
-            r.draw_transparent(m.ring_thin, model_matrix(me.x, 0.06, me.z, scale=ab["range"]), (*col, 0.6))
-            k = min(1.0, ab["range"] / dist)
+        unlearned = not spell and bool(me.d) and me.d["ab"].get(slot, 0) <= 0     # 아직 배우지 않은 스킬도 빨갛게
+        col = (1.0, 0.32, 0.28) if (cd > 0 or unlearned) else (0.55, 0.85, 1.0)
+        typ = ab["type"]
+        rng = ab.get("range", ab.get("length", 0.0))
+        shown = rng or ab.get("radius") or 0.0
+        if shown and shown > 0:
+            self.ind_range = (me.x, me.z, shown, col)
+        if mode == "line":
+            r.draw_transparent(m.ring_thin, model_matrix(me.x, 0.06, me.z, scale=rng), (*col, 0.45))
+            if typ == "hook_dash" and ab.get("bush_range"):
+                r.draw_transparent(m.ring_thin, model_matrix(me.x, 0.06, me.z, scale=ab["bush_range"]), (*col, 0.18))
+            if typ == "knife_throw":
+                fan = max(20, ab.get("fan_angle", 16) * 2)
+                r.draw_transparent(self.sector_mesh(fan), model_matrix(me.x, 0.07, me.z, rot_y=ang, scale=rng),
+                                   (*col, 0.28))
+            else:
+                length = min(dist, rng) if typ == "dash" else rng
+                width = ab.get("width", 0.9)
+                if width > 0:
+                    r.draw_transparent(self.quad, model_matrix(me.x, 0.07, me.z, rot_y=ang, sx=width, sy=1, sz=length),
+                                       (*col, 0.35))
+                if typ == "dash":
+                    ex, ez = me.x + dx / dist * length, me.z + dz / dist * length
+                    r.draw_transparent(m.ring, model_matrix(ex, 0.08, ez, scale=0.6), (*col, 0.9))
+        elif mode == "cone":
+            r.draw_transparent(m.ring_thin, model_matrix(me.x, 0.06, me.z, scale=rng), (*col, 0.35))
+            crng = ab.get("cone_range", rng)                 # 부채꼴 바람의 실제 사거리 (회오리는 더 멀리 간다)
+            r.draw_transparent(self.sector_mesh(ab.get("angle", 60)), model_matrix(me.x, 0.07, me.z, rot_y=ang, scale=crng),
+                               (*col, 0.2 if typ == "volley" else 0.32))
+            if typ == "tornado":                             # 한가운데로 굴러가는 회오리 길 (부채꼴 위에 바로 겹쳐 보여 준다)
+                r.draw_transparent(self.quad, model_matrix(me.x, 0.08, me.z, rot_y=ang, sx=ab.get("width", 2.6), sy=1, sz=rng),
+                                   (*col, 0.4))
+            if typ == "volley":                              # 독침: 실제로 날아가는 침 길 하나하나를 선으로 (너비 = 침 너비)
+                n = max(1, int(ab.get("count", 5)))
+                spread = math.radians(ab.get("spread", 55))
+                for j in range(n):
+                    a_j = ang + ((j / (n - 1) - 0.5) * spread if n > 1 else 0.0)
+                    r.draw_transparent(self.quad, model_matrix(me.x, 0.075, me.z, rot_y=a_j, sx=ab.get("width", 0.4), sy=1, sz=rng),
+                                       (*col, 0.4))
+        elif mode == "ground":
+            radius = ab.get("radius", ab.get("trigger_radius", 1.0))
+            r.draw_transparent(m.ring_thin, model_matrix(me.x, 0.06, me.z, scale=rng), (*col, 0.6))
+            k = min(1.0, rng / dist)
             ex, ez = me.x + dx * k, me.z + dz * k
-            r.draw_transparent(m.disc, model_matrix(ex, 0.07, ez, scale=ab["radius"]), (*col, 0.25))
-            r.draw_transparent(m.ring, model_matrix(ex, 0.08, ez, scale=ab["radius"]), (*col, 0.9))
+            if typ == "cocoon":                              # 고치: 마우스 위치에 시전 방향과 수직(T자)으로 나란한 원
+                n = max(1, int(ab.get("count", 3)))
+                gap = ab.get("spacing", 1.7)
+                dl = max(1e-6, math.hypot(dx, dz))
+                ux_, uz_ = dx / dl, dz / dl
+                px_, pz_ = -uz_, ux_
+                stem = min(dist, rng)
+                r.draw_transparent(self.beam, model_matrix(me.x, 0.07, me.z, rot_y=ang, sx=0.12, sy=0.05, sz=stem),
+                                   (*col, 0.3))
+                for j in range(n):
+                    off = (j - (n - 1) / 2) * gap
+                    cx_, cz_ = ex + px_ * off, ez + pz_ * off
+                    r.draw_transparent(m.disc, model_matrix(cx_, 0.07, cz_, scale=radius), (*col, 0.25))
+                    r.draw_transparent(m.ring, model_matrix(cx_, 0.08, cz_, scale=radius), (*col, 0.9))
+            elif typ == "sky_dive":                          # 불꽃 비행: 자신↔착지 지점 사이 일자 길 — 바깥 바(넓음) + 안쪽 바(2배 피해)
+                ln = min(dist, rng)
+                r.draw_transparent(self.quad, model_matrix(me.x, 0.07, me.z, rot_y=ang, sx=ab.get("path_width", 5.0), sy=1, sz=ln), (*col, 0.2))
+                r.draw_transparent(self.quad, model_matrix(me.x, 0.075, me.z, rot_y=ang, sx=ab.get("inner_width", 3.0), sy=1, sz=ln), (*col, 0.3))
+                r.draw_transparent(m.disc, model_matrix(ex, 0.07, ez, scale=radius), (*col, 0.25))
+                r.draw_transparent(m.ring, model_matrix(ex, 0.08, ez, scale=radius), (*col, 0.9))
+            else:
+                r.draw_transparent(m.disc, model_matrix(ex, 0.07, ez, scale=radius), (*col, 0.25))
+                r.draw_transparent(m.ring, model_matrix(ex, 0.08, ez, scale=radius), (*col, 0.9))
+        elif mode == "circle":                                # 자기 중심 광역: 누르는 동안 자기 둘레 범위를 보여 준다
+            radius = ab.get("radius", 3.0)
+            r.draw_transparent(m.disc, model_matrix(me.x, 0.07, me.z, scale=radius), (*col, 0.22))
+            r.draw_transparent(m.ring, model_matrix(me.x, 0.08, me.z, scale=radius), (*col, 0.9))
+        elif mode == "teleport":
+            radius = ab.get("radius", 2.0)
+            k = min(1.0, rng / dist)
+            ex, ez = me.x + dx * k, me.z + dz * k
+            r.draw_transparent(self.beam, model_matrix(me.x, 0.07, me.z, rot_y=ang, sx=0.18, sy=0.05,
+                                                       sz=min(dist, rng)), (*col, 0.45))
+            r.draw_transparent(m.disc, model_matrix(ex, 0.07, ez, scale=radius), (*col, 0.25))
+            r.draw_transparent(m.ring, model_matrix(ex, 0.08, ez, scale=radius), (*col, 0.9))
+            r.draw_transparent(self.pillar, model_matrix(ex, 0.0, ez, sx=0.4, sy=5.0, sz=0.4), (*col, 0.25),
+                               additive=True)
+        elif mode == "enemy":
+            # 대상 지정: 마우스에 가장 가까운 (사거리 안) 적 챔피언을 표시. 대상이 없으면 사거리 원을 빨갛게 보여 준다.
+            best = self.aim_enemy(rng)
+            rcol = col if best is not None else (1.0, 0.32, 0.28)
+            r.draw_transparent(m.ring_thin, model_matrix(me.x, 0.06, me.z, scale=rng), (*rcol, 0.5 if best is not None else 0.8))
+            if best is None:
+                r.draw_transparent(m.disc, model_matrix(me.x, 0.055, me.z, scale=rng), (*rcol, 0.07))
+                if typ == "leap_slam":                       # 대상이 없어도 마우스 위치(사거리 안으로 제한) 기준으로 범위를 보여 준다
+                    k = min(1.0, rng / dist)
+                    self.draw_slam_area(me.x + dx * k, me.z + dz * k, ab, rcol)
+            else:
+                r.draw_transparent(m.ring, model_matrix(best.x, 0.09, best.z, scale=1.05), (1.0, 0.45, 0.35, 0.95))
+                r.draw_transparent(m.disc, model_matrix(best.x, 0.08, best.z, scale=1.0), (1.0, 0.45, 0.35, 0.22))
+                if typ == "leap_slam":                       # 덮쳐 내려찍기: 광역 피해 범위(진하게) + 그보다 넓은 장판 범위(연하게)
+                    self.draw_slam_area(best.x, best.z, ab, (1.0, 0.45, 0.35) if cd <= 0 and not unlearned else col)
+        elif mode == "ally":
+            r.draw_transparent(m.ring_thin, model_matrix(me.x, 0.06, me.z, scale=rng), (*col, 0.5))
+            best, bd = None, 1e9
+            for cid, e in self.champs.items():
+                if not e.visible or not e.d or e.d["dead"] or self.champ_info[cid]["tm"] != self.my_team:
+                    continue
+                if math.hypot(e.x - me.x, e.z - me.z) > rng + 0.5:
+                    continue
+                dd = math.hypot(e.x - mx, e.z - mz)
+                if dd < bd:
+                    best, bd = e, dd
+            if best is not None:
+                r.draw_transparent(m.ring, model_matrix(best.x, 0.09, best.z, scale=1.05), (0.55, 1.0, 0.6, 0.95))
+                r.draw_transparent(m.disc, model_matrix(best.x, 0.08, best.z, scale=1.0), (0.55, 1.0, 0.6, 0.22))
+        else:   # self (즉시 시전): 효과 범위가 있으면 내 주변에 표시
+            radius = ab.get("radius")
+            if radius:
+                r.draw_transparent(m.disc, model_matrix(me.x, 0.07, me.z, scale=radius), (*col, 0.18))
+                r.draw_transparent(m.ring, model_matrix(me.x, 0.08, me.z, scale=radius), (*col, 0.85))
+            else:
+                r.draw_transparent(m.ring, model_matrix(me.x, 0.07, me.z, scale=1.2), (*col, 0.8))
 
     # ------------------------------------------------------------------ 2D
     def draw_ui(self, surf):
@@ -1111,6 +2143,7 @@ class GameScene(Scene):
         self.draw_killfeed(surf)
         self.draw_announces(surf)
         self.draw_hud(surf)
+        self.draw_team_frames(surf)
         self.draw_minimap(surf)
         self.draw_chat(surf)
         me = self.me
@@ -1131,7 +2164,9 @@ class GameScene(Scene):
             self.draw_scoreboard(surf)
         if self.winner is not None:
             self.draw_game_over(surf)
-        if self.hud_tooltip and not self.settings_open:
+        if getattr(self, "stat_tip", None) and not self.settings_open:
+            self.draw_stat_tooltip(surf, *self.stat_tip)
+        elif self.hud_tooltip and not self.settings_open:
             mouse, tip = self.hud_tooltip
             self.draw_tooltip(surf, mouse, *tip)
         if self.settings_open:
@@ -1143,7 +2178,7 @@ class GameScene(Scene):
             st = self.struct_state[sid]
             if not st[2]:
                 continue
-            h = {"turret": 5.2, "inhibitor": 2.8, "nexus": 5.0}[s["k"]]
+            h = {"turret": 5.2, "inhibitor": 2.8, "nexus": 5.8}[s["k"]]
             p = cam.world_to_screen(s["x"], h, s["z"])
             if not p:
                 continue
@@ -1170,7 +2205,7 @@ class GameScene(Scene):
             d = e.d
             if not d or d["dead"] or not e.visible:
                 continue
-            p = cam.world_to_screen(e.x, 2.45, e.z)
+            p = cam.world_to_screen(e.x, getattr(e.ca, "bar_h", 2.45) if e.ca else 2.45, e.z)     # 머리가 높이 솟는 리그(이무기)는 체력바도 높이
             if not p:
                 continue
             info = self.champ_info[cid]
@@ -1185,9 +2220,60 @@ class GameScene(Scene):
             pygame.draw.rect(surf, (30, 30, 40, 255), (x0 - 22, y0 - 2, 20, 21))
             ui.text(surf, str(d["lv"]), (x0 - 12, y0 + 8), 13, ui.TEXT, anchor="center", bold=True, shadow=False)
             ui.bar(surf, (x0, y0, 104, 11), d["hp"] / max(1, d["mhp"]), col, border=None)
+            self.draw_shield_segment(surf, x0, y0, 104, 11, d["hp"], d["mhp"], d.get("sh", 0))
             self.draw_hp_ticks(surf, x0, y0, 104, 5, d["hp"], d["mhp"], 250)
             ui.bar(surf, (x0, y0 + 12, 104, 5), d["mp"] / max(1, d["mmp"]), (80, 140, 255), border=None)
             ui.text(surf, info["n"], (p[0], y0 - 4), 13, ui.TEXT, anchor="midbottom")
+            self.draw_status_badges(surf, p[0], y0 + 20, d["st"])
+            if "bushq" in d["st"]:
+                # 부쉬 안의 외줄 광대: 늘어난 사거리로 줄을 걸 수 있다는 경고
+                pulse = 0.6 + 0.4 * math.sin(time.time() * 8)
+                pygame.draw.polygon(surf, (int(255 * pulse), 70, 50),
+                                    [(x0 + 118, y0 - 2), (x0 + 108, y0 + 16), (x0 + 128, y0 + 16)])
+                ui.text(surf, "!", (x0 + 118, y0 + 9), 13, (255, 255, 255), anchor="center", bold=True, shadow=False)
+        # 줄 말뚝: 부수는 데 필요한 평타 수
+        for row, recv in self.anchors:
+            aid, team, ax, az, ahp, remaining = row[:6]
+            cocoon = len(row) > 6 and row[6] == 1
+            p = cam.world_to_screen(ax, 1.3 if cocoon else 1.15, az)
+            if p:
+                col = (90, 170, 255) if team == self.my_team else (230, 70, 60)
+                if cocoon:                                  # 고치: 미니언과 같은 일반 체력바
+                    mhp = row[8] if len(row) > 8 else max(1, ahp)
+                    ui.bar(surf, (int(p[0]) - 20, int(p[1]), 40, 5), ahp / max(1, mhp), col)
+                    continue
+                pips = 3
+                for i in range(pips):
+                    rect = pygame.Rect(int(p[0]) - pips * 7 - 1 + i * 15, int(p[1]), 12, 6)
+                    pygame.draw.rect(surf, col if i < ahp else (40, 44, 56), rect)
+                    pygame.draw.rect(surf, (0, 0, 0), rect, 1)
+
+    @staticmethod
+    def draw_shield_segment(surf, x0, y0, w, h, hp, mhp, shield):
+        """체력바 위에 보호막 구간을 덧그린다 (체력 바로 뒤, 꽉 차 있으면 오른쪽 끝에서부터)."""
+        if shield <= 0 or mhp <= 0:
+            return
+        sw = max(2, min(w, int(w * shield / mhp)))
+        sx = x0 + int(w * hp / mhp)
+        sx = min(sx, x0 + w - sw)
+        pygame.draw.rect(surf, (235, 238, 250), (sx, y0, sw, h))
+        pygame.draw.rect(surf, (140, 150, 180), (sx, y0, sw, h), 1)
+
+    @staticmethod
+    def draw_status_badges(surf, cx, y, statuses):
+        """체력바 아래에 상태 이상·강화 이름표를 작게 늘어놓는다."""
+        shown = [(label, col) for key, label, col in STATUS_BADGES if key in statuses][:4]
+        if not shown:
+            return
+        font = ui.font(11, True)
+        widths = [font.size(label)[0] + 8 for label, _ in shown]
+        x = int(cx - (sum(widths) + 3 * (len(shown) - 1)) / 2)
+        for (label, col), wd in zip(shown, widths):
+            rect = pygame.Rect(x, int(y), wd, 14)
+            pygame.draw.rect(surf, tuple(int(v * 0.4) for v in col), rect, border_radius=3)
+            pygame.draw.rect(surf, col, rect, 1, border_radius=3)
+            ui.text(surf, label, rect.center, 11, (245, 245, 250), anchor="center", bold=True, shadow=False)
+            x += wd + 3
 
     @staticmethod
     def draw_hp_ticks(surf, x0, y0, w, h, hp, mhp, unit):
@@ -1249,19 +2335,25 @@ class GameScene(Scene):
         now = time.time()
         if self.chat_open:
             lines = self.chat_lines[-10:]
-            bg = pygame.Surface((CHAT_W, 10 * 19 + 8), pygame.SRCALPHA)
+            bg = pygame.Surface((CHAT_W, 10 * CHAT_LINE + 8), pygame.SRCALPHA)
             bg.fill((8, 12, 22, 140))
-            surf.blit(bg, (CHAT_X, CHAT_Y - 10 * 19 - 10))
+            surf.blit(bg, (CHAT_X, CHAT_Y - 10 * CHAT_LINE - 10))
         else:
             lines = [ln for ln in self.chat_lines[-8:] if now - ln[0] < CHAT_SHOW]
         y = CHAT_Y - 6
         for t, parts in reversed(lines):
-            fade = 1.0 if self.chat_open else min(1.0, (CHAT_SHOW - (now - t)) / 2.0)
+            fade = 1.0 if self.chat_open else max(0.0, min(1.0, (CHAT_SHOW - (now - t)) / 2.0))
             x = CHAT_X + 6
-            for text, col in parts:
-                c = tuple(int(v * (0.35 + 0.65 * fade)) for v in col)
-                x = ui.text(surf, text, (x, y), 14, c, anchor="bottomleft").right
-            y -= 19
+            for text, col in parts:                          # 어두워지지 않고 투명해지며 사라진다
+                img = ui.render_text(text, CHAT_FONT, col, False).copy()
+                sh = ui.render_text(text, CHAT_FONT, (0, 0, 0), False).copy()
+                img.set_alpha(int(255 * fade))
+                sh.set_alpha(int(255 * fade))
+                rc = img.get_rect(bottomleft=(x, y))
+                surf.blit(sh, rc.move(1, 1))
+                surf.blit(img, rc)
+                x = rc.right
+            y -= CHAT_LINE
         if self.chat_open:
             self.chat_in.draw(surf)
 
@@ -1280,11 +2372,10 @@ class GameScene(Scene):
         if not me or not data:
             return
         ui.panel(surf, HUD_RECT, (14, 20, 34, 235), ui.BORDER)
+        self.draw_cast_msg(surf)
         # 초상화
-        col = tuple(data.get("color", (200, 200, 200)))
-        pygame.draw.circle(surf, col, (338, 650), 30)
-        pygame.draw.circle(surf, (230, 230, 240), (338, 650), 30, 2)
-        ui.text(surf, data["name"][0], (338, 650), 26, (20, 30, 50), anchor="center", bold=True, shadow=False)
+        draw_round_portrait(surf, self.champ_info[self.my_id]["c"], (338, 650), 30, (230, 230, 240),
+                            color=data.get("color", (200, 200, 200)))
         pygame.draw.circle(surf, (20, 25, 40), (360, 678), 13)
         ui.text(surf, str(me["lv"]), (360, 678), 14, anchor="center", bold=True)
         # 경험치
@@ -1301,21 +2392,27 @@ class GameScene(Scene):
             rank = me["ab"][slot]
             cd = me["cd"][slot]
             mana_ok = rank > 0 and me["mp"] >= ab.get("mana", [0])[rank - 1]
-            base = (40, 70, 110) if rank > 0 else (35, 38, 48)
-            pygame.draw.rect(surf, base, rect, border_radius=6)
-            ui.text(surf, ab["name"][:2], rect.center, 16, (220, 235, 255) if rank else ui.TEXT_DIM, anchor="center",
-                    bold=True)
+            icon = ui.icon(f"assets/ui/skills/{data['id']}_{slot}.png", 54)
+            if icon:
+                surf.blit(icon, rect)
+                radius = 9
+                if rank <= 0:
+                    shade(surf, rect, (0, 0, 0, 165), radius)       # 아직 배우지 않은 스킬은 어둡게
+            else:
+                radius = 6
+                pygame.draw.rect(surf, (40, 70, 110) if rank > 0 else (35, 38, 48), rect, border_radius=6)
+                ui.text(surf, ab["name"][:2], rect.center, 16, (220, 235, 255) if rank else ui.TEXT_DIM,
+                        anchor="center", bold=True)
             if rank > 0 and cd > 0:
-                sh = pygame.Surface(rect.size, pygame.SRCALPHA)
-                sh.fill((0, 0, 0, 160))
-                surf.blit(sh, rect)
+                shade(surf, rect, (0, 0, 0, 160), radius)
                 ui.text(surf, f"{cd:.0f}" if cd >= 1 else f"{cd:.1f}", rect.center, 20, anchor="center", bold=True)
-            elif rank > 0 and not mana_ok:
-                sh = pygame.Surface(rect.size, pygame.SRCALPHA)
-                sh.fill((20, 40, 140, 140))
-                surf.blit(sh, rect)
-            border = ui.HIGHLIGHT if self.aiming == slot else ui.BORDER
-            pygame.draw.rect(surf, border, rect, 2 if self.aiming == slot else 1, border_radius=6)
+            elif rank > 0 and not mana_ok:                   # 마나 부족: 쿨타임처럼 어둡게 + 필요 마나를 파란 글씨로
+                shade(surf, rect, (0, 0, 0, 160), radius)
+                ui.text(surf, f"{ab.get('mana', [0])[rank - 1]:g}", rect.center, 20, MANA_BLUE, anchor="center", bold=True)
+            if self.aiming == slot:
+                pygame.draw.rect(surf, ui.HIGHLIGHT, rect, 2, border_radius=radius)
+            elif not icon:
+                pygame.draw.rect(surf, ui.BORDER, rect, 1, border_radius=radius)
             ui.text(surf, self.binds.name(slot), (x + 3, 614), 12, ui.GOLD, bold=True)
             # 랭크 표시
             maxr = len(ab["cooldown"])
@@ -1330,34 +2427,39 @@ class GameScene(Scene):
                 self.levelup_rects.append((slot, lr))
             if rect.collidepoint(mouse):
                 cost = ab.get("mana", [0])[max(0, rank - 1)]
-                tooltip = (f"[{self.binds.name(slot)}] {ab['name']}  ·  마나 {cost}  ·  "
-                           f"{ab['cooldown'][max(0, rank - 1)]}초", ab.get("desc", ""), ability_details(ab), rank)
+                tooltip = ([(f"[{self.binds.name(slot)}] {ab['name']}  ·  ", ui.GOLD), (f"마나 {cost}", MANA_BLUE),
+                            (f"  ·  {ab['cooldown'][max(0, rank - 1)]}초", ui.GOLD)], ab.get("desc", ""), ability_details(ab), rank)
         # 소환사 주문
+        spl = me.get("spl") or DEFAULT_SPELLS
         for slot in ("D", "F"):
-            sid = self.binds.spell_at(slot)
-            name, col, desc, details = SPELL_INFO[sid]
-            marked = sid == "F" and me["mk"]
+            sid = spl[0 if slot == "D" else 1]
+            sp = SPELLS[sid]
+            marked = sid == "mark" and me["mk"]
             x = SPELL_X[slot]
             rect = pygame.Rect(x, 619, 44, 44)
-            pygame.draw.rect(surf, col, rect, border_radius=6)
-            ui.text(surf, name, rect.center, 14, anchor="center", bold=True)
-            cd = me["cd"][sid]
+            icon = ui.icon(f"assets/ui/spells/{sid}.png", 44)
+            if icon:
+                surf.blit(icon, rect)
+            else:
+                pygame.draw.rect(surf, tuple(c // 2 for c in sp["color"]), rect, border_radius=6)
+                ui.text(surf, sp["name"], rect.center, 14, anchor="center", bold=True)
+            cd = me["cd"][slot]
             if marked:
-                pygame.draw.rect(surf, ui.HIGHLIGHT, rect, 3, border_radius=6)     # 재사용(돌진) 가능
+                pygame.draw.rect(surf, ui.HIGHLIGHT, rect, 3, border_radius=8)     # 재사용(돌진) 가능
             elif cd > 0:
-                sh = pygame.Surface(rect.size, pygame.SRCALPHA)
-                sh.fill((0, 0, 0, 170))
-                surf.blit(sh, rect)
+                shade(surf, rect, (0, 0, 0, 170), 8)
                 ui.text(surf, f"{cd:.0f}", rect.center, 17, anchor="center", bold=True)
-            if not marked:
+            if not marked and not icon:
                 pygame.draw.rect(surf, ui.BORDER, rect, 1, border_radius=6)
             ui.text(surf, self.binds.name(slot), (x + 3, 619), 11, ui.GOLD, bold=True)
             if rect.collidepoint(mouse):
-                tooltip = (f"[{self.binds.name(slot)}] {name}", desc, details, 0)
+                tooltip = (f"[{self.binds.name(slot)}] {sp['name']}", sp["desc"], sp["details"], 0)
 
         # 체력 / 마나
         ui.bar(surf, (392, 680, 356, 15), me["hp"] / max(1, me["mhp"]), (70, 190, 70))
-        ui.text(surf, f"{me['hp']} / {me['mhp']}", (570, 687), 12, anchor="center", shadow=True)
+        self.draw_shield_segment(surf, 392, 680, 356, 15, me["hp"], me["mhp"], me.get("sh", 0))
+        ui.text(surf, f"{me['hp']} / {me['mhp']}" + (f"  (+{me['sh']})" if me.get("sh", 0) > 0 else ""),
+                (570, 687), 12, anchor="center", shadow=True)
         ui.bar(surf, (392, 697, 356, 11), me["mp"] / max(1, me["mmp"]), (70, 120, 230))
         ui.text(surf, f"{me['mp']} / {me['mmp']}", (570, 702), 10, anchor="center", shadow=True)
 
@@ -1382,6 +2484,7 @@ class GameScene(Scene):
 
         # 능력치
         st = me["s"]
+        self.stat_tip = None
         ui.panel(surf, (160, 606, 136, 108), (14, 20, 34, 225), ui.BORDER)
         for i, (key, label, value) in enumerate(STAT_ICONS):
             x = 168 + (i % 2) * 64
@@ -1396,21 +2499,92 @@ class GameScene(Scene):
                 ui.text(surf, ch, icon_rect.center, 12, (20, 20, 30), anchor="center", bold=True, shadow=False)
             ui.text(surf, str(value(st)), (x + 26, y + 10), 13, anchor="midleft", shadow=False)
             if pygame.Rect(x, y, 60, 20).collidepoint(mouse):
-                tooltip = (label, "")
+                self.stat_tip = (mouse, key, label, me)
 
         self.hud_tooltip = (mouse, tooltip) if tooltip else None
+
+    def draw_stat_tooltip(self, surf, mouse, key, label, me):
+        """롤식 능력치 툴팁: 설명 + '공격력: 81 (기본 59+추가 22)'."""
+        st, base = me["s"], me.get("sb", {})
+        sk = {"ad": "ad", "ap": "ap", "armor": "ar", "mr": "mr", "attack_speed": "aspd",
+              "move_speed": "ms", "ability_haste": "ah", "crit": "cr"}[key]
+        total = st[sk]
+        b = base.get(sk, 0.0)
+        pct = key == "crit"
+        if key == "attack_speed":
+            fmt = lambda v: f"{v:.2f}"
+        elif pct:
+            fmt = lambda v: f"{v:g}%"
+        else:
+            fmt = lambda v: f"{round(v):g}"
+        bonus = total - b
+        DESC = {
+            "ad": ("기본 공격으로 가하는 ", "물리 피해", (255, 140, 70), "를 나타냅니다. 또한, 일부 스킬로 가하는 피해량을 증가시킵니다."),
+            "ap": ("스킬과 효과로 가하는 ", "마법 피해", (130, 190, 255), "를 증가시킵니다."),
+            "armor": ("받는 ", "물리 피해", (255, 140, 70), "를 줄여줍니다."),
+            "mr": ("받는 ", "마법 피해", (130, 190, 255), "를 줄여줍니다."),
+            "attack_speed": ("초당 ", "기본 공격", (255, 140, 70), " 횟수를 나타냅니다."),
+            "move_speed": ("초당 ", "이동 거리", (200, 215, 230), "를 나타냅니다. (100 = 기본 이동 속도 기준)"),
+            "ability_haste": ("스킬의 ", "재사용 대기시간", (120, 210, 230), "을 줄여줍니다."),
+            "crit": ("기본 공격이 ", "치명타", (235, 90, 80), "로 적중할 확률입니다."),
+        }[key]
+        W = 360
+        body = "".join(DESC[:1]) + DESC[1] + DESC[3]
+        lines = ui.wrap(body, 13, W - 24)
+        R = max(40, len(lines) * 19 + 20)              # 세 영역(이름 / 설명 / 수치)의 높이를 똑같이
+        h = R * 3
+        r = pygame.Rect(0, 0, W, h)
+        r.bottomleft = (mouse[0] - 10, mouse[1] - 10)
+        r.x = max(4, min(WIDTH - W - 4, r.x)); r.y = max(4, r.y)
+        ui.panel(surf, r, (12, 18, 30, 245), ui.BORDER)
+        for k in (1, 2):
+            pygame.draw.line(surf, (150, 125, 60), (r.x + 8, r.y + R * k), (r.right - 8, r.y + R * k))
+        ui.text(surf, label, (r.x + 12, r.y + R // 2), 15, ui.TEXT, anchor="midleft", bold=True)
+        # 설명: 키워드 색 강조 (줄이 키워드 중간에서 갈리면 그 줄은 기본색)
+        pre, kw, kcol, post = DESC
+        y = r.y + R + (R - len(lines) * 19) // 2
+        for line in lines:
+            x = r.x + 12
+            rest = line
+            while rest:
+                j = rest.find(kw)
+                if j < 0:
+                    ui.text(surf, rest, (x, y), 13, ui.TEXT, shadow=False); break
+                if j:
+                    x = ui.text(surf, rest[:j], (x, y), 13, ui.TEXT, shadow=False).right
+                x = ui.text(surf, kw, (x, y), 13, kcol, shadow=False).right
+                rest = rest[j + len(kw):]
+            y += 19
+        cy = r.y + R * 2 + R // 2
+        parts = [(f"{label}: ", ui.TEXT, False), (fmt(total), (110, 230, 120), True)]
+        if key != "move_speed" and not (abs(bonus) < 1e-6 and b == 0):
+            col = (110, 230, 120) if bonus >= 0 else (255, 110, 100)
+            parts += [(" (기본 ", ui.TEXT, False), (fmt(b), (90, 190, 255), False),
+                      ("+" if bonus >= 0 else "-", ui.TEXT, False), (fmt(abs(bonus)), col, False), (")", ui.TEXT, False)]
+        x = r.x + 12
+        for t_, col_, bd in parts:
+            x = ui.text(surf, t_, (x, cy), 14, col_, anchor="midleft", bold=bd, shadow=False).right
 
     def draw_tooltip(self, surf, mouse, title, body, details=None, rank=0):
         """HUD 툴팁. details 가 있으면 Shift 를 누르고 있는 동안 상세 값(레벨별 값은 현재 레벨 강조)을 보여준다."""
         shift = bool(details) and bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
         lines = ui.wrap(body, 13, 320) if body else []
         h = 30 + len(lines) * 17 + (10 + len(details) * 20 if shift else 0)
-        w = (400 if shift else 340) if body else ui.font(14, True).size(title)[0] + 20
+        if isinstance(title, list):
+            title_w = sum(ui.font(14, True).size(t)[0] for t, _ in title)
+        else:
+            title_w = ui.font(14, True).size(title)[0]
+        w = (400 if shift else 340) if body else title_w + 20
         r = pygame.Rect(0, 0, w, h)
         r.bottomleft = (mouse[0] - 20, 580 if body else mouse[1] - 8)
         r.x = max(4, min(WIDTH - w - 4, r.x))
         ui.panel(surf, r, (12, 18, 30, 245), ui.BORDER)
-        ui.text(surf, title, (r.x + 10, r.y + 6), 14, ui.GOLD, bold=True)
+        if isinstance(title, list):
+            tx = r.x + 10
+            for t, col in title:
+                tx = ui.text(surf, t, (tx, r.y + 6), 14, col, bold=True).right
+        else:
+            ui.text(surf, title, (r.x + 10, r.y + 6), 14, ui.GOLD, bold=True)
         if details and not shift:
             ui.text(surf, "Shift 상세", (r.right - 10, r.y + 8), 11, ui.TEXT_DIM, anchor="topright")
         ui.text_block(surf, body, (r.x + 10, r.y + 26), 320, 13, ui.TEXT, 3)
@@ -1420,31 +2594,106 @@ class GameScene(Scene):
         pygame.draw.line(surf, (50, 60, 80), (r.x + 10, y), (r.right - 10, y))
         y += 6
         for label, value in details:
-            ui.text(surf, label, (r.x + 10, y), 13, ui.TEXT_DIM)
+            mana_row = label == "마나 소모"
+            ui.text(surf, label, (r.x + 10, y), 13, MANA_BLUE if mana_row else ui.TEXT_DIM)
             if isinstance(value, list):
                 x = r.x + 150
                 for i, v in enumerate(value):
                     cur = i == rank - 1
-                    x = ui.text(surf, v, (x, y), 13, ui.GOLD if cur else ui.TEXT, bold=cur).right
+                    x = ui.text(surf, v, (x, y), 13, MANA_BLUE if mana_row else (ui.GOLD if cur else ui.TEXT), bold=cur).right
                     if i < len(value) - 1:
                         x = ui.text(surf, " / ", (x, y), 13, ui.TEXT_DIM).right
             else:
-                ui.text(surf, value, (r.x + 150, y), 13, ui.TEXT)
+                ui.text(surf, value, (r.x + 150, y), 13, MANA_BLUE if mana_row else ui.TEXT)
             y += 20
 
     # ---- 미니맵
     def world_to_minimap(self, x, z):
         mx = MINIMAP.x + 8 + (x + MINIMAP_X) / (2 * MINIMAP_X) * (MINIMAP.width - 16)
-        my = MINIMAP.centery + z / 13 * (MINIMAP.height / 2 - 6)
+        my = MINIMAP.centery + z * (MINIMAP.width - 16) / (2 * MINIMAP_X)      # 가로·세로 같은 축척 (비율 왜곡 없음)
         return int(mx), int(my)
+
+    def minimap_ellipse(self, x, z, radius):
+        """월드의 원(반지름 radius)을 미니맵에 그릴 타원 영역으로. 미니맵은 가로·세로 축척이 달라 타원이 된다."""
+        cx, cy = self.world_to_minimap(x, z)
+        rx = radius / (2 * MINIMAP_X) * (MINIMAP.width - 16)
+        ry = rx
+        return pygame.Rect(int(cx - rx), int(cy - ry), max(2, int(rx * 2)), max(2, int(ry * 2)))
 
     def minimap_to_world(self, sx, sy):
         x = (sx - MINIMAP.x - 8) / (MINIMAP.width - 16) * (2 * MINIMAP_X) - MINIMAP_X
-        z = (sy - MINIMAP.centery) / (MINIMAP.height / 2 - 6) * 13
+        z = (sy - MINIMAP.centery) * (2 * MINIMAP_X) / (MINIMAP.width - 16)
         return mapdata.clamp_to_map(x, z)
 
+    def portrait(self, surf, rect, cid, level, dead, ring):
+        """롤식 팀 프로필 아이콘: 원형 초상화, 팀색 테두리, 좌하단 레벨, 죽으면 흑백."""
+        info = self.champ_info[cid]
+        data = gamedata.champion(info["c"]) or {}
+        draw_round_portrait(surf, info["c"], rect.center, rect.w // 2, ring, dead, data.get("color", (160, 170, 190)))
+        lp = (rect.x + 7, rect.bottom - 7)
+        pygame.draw.circle(surf, (12, 16, 26), lp, 9)
+        pygame.draw.circle(surf, ring if not dead else (110, 112, 120), lp, 9, 1)
+        ui.text(surf, str(level), lp, 11, (230, 235, 245) if not dead else (150, 152, 160),
+                anchor="center", bold=True, shadow=False)
+
+    def draw_team_frames(self, surf):
+        """롤식 팀 프로필: 미니맵 바로 위. 아래줄=아군(자신 제외, 죽으면 자신도) 아이콘+짧은 체력/마나 바,
+        윗줄=죽은 적 아이콘(흑백+부활 초). 죽은 아군은 흑백+부활 초."""
+        if not self.champ_info or not self.me:
+            return
+        SZ, GAP = 40, 6
+        allies = [cid for cid, i in self.champ_info.items() if i["tm"] == self.my_team]
+        enemies = [cid for cid, i in self.champ_info.items() if i["tm"] != self.my_team]
+
+        def state(cid):
+            e = self.champs.get(cid)
+            d = e.d if e else None
+            row = self.board.get(cid)
+            lv = (d["lv"] if d else (row[1] if row else 1))
+            dead = bool(row[8]) if row else (bool(d["dead"]) if d else False)
+            if d and d.get("dead"):
+                dead = True
+            rt = (row[9] if row else (d["rt"] if d else 0)) if dead else 0
+            return e, d, lv, dead, rt
+
+        ally_rows = []
+        for cid in allies:
+            st = state(cid)
+            if cid == self.my_id and not st[3]:
+                continue                       # 자신은 평소엔 표시 안 함
+            ally_rows.append((cid, st))
+        dead_enemies = [(cid, state(cid)) for cid in enemies if state(cid)[3]]
+
+        right = MINIMAP.right
+        y_bottom = TEAMFRAME.bottom
+        ROW_H = SZ + 12                         # 아이콘 + 바 2줄
+        if ally_rows:
+            n = len(ally_rows)
+            x0 = right - n * SZ - (n - 1) * GAP
+            y0 = y_bottom - ROW_H
+            for i, (cid, (e, d, lv, dead, rt)) in enumerate(ally_rows):
+                r = pygame.Rect(x0 + i * (SZ + GAP), y0, SZ, SZ)
+                self.portrait(surf, r, cid, lv, dead, ui.BLUE_C if cid != self.my_id else (255, 220, 110))
+                if dead:
+                    ui.text(surf, f"{rt:.0f}", r.center, 20, (255, 255, 255), anchor="center", bold=True)
+                elif d:
+                    ratio = d["hp"] / max(1, d["mhp"])
+                    col = (80, 210, 100) if ratio > 0.35 else (240, 190, 70) if ratio > 0.15 else (240, 80, 70)
+                    pygame.draw.rect(surf, (10, 14, 20), (r.x, r.bottom + 2, SZ, 11))
+                    pygame.draw.rect(surf, col, (r.x + 1, r.bottom + 3, int((SZ - 2) * max(0, min(1, ratio))), 5))
+                    mr = d["mp"] / max(1, d["mmp"])
+                    pygame.draw.rect(surf, (70, 130, 255), (r.x + 1, r.bottom + 9, int((SZ - 2) * max(0, min(1, mr))), 3))
+        if dead_enemies:
+            n = len(dead_enemies)
+            x0 = right - n * SZ - (n - 1) * GAP
+            y0 = y_bottom - (ROW_H if ally_rows else 0) - SZ - 8
+            for i, (cid, (e, d, lv, dead, rt)) in enumerate(dead_enemies):
+                r = pygame.Rect(x0 + i * (SZ + GAP), y0, SZ, SZ)
+                self.portrait(surf, r, cid, lv, True, ui.RED_C)
+                ui.text(surf, f"{rt:.0f}", r.center, 20, (255, 255, 255), anchor="center", bold=True)
+
     def draw_minimap(self, surf):
-        ui.panel(surf, MINIMAP, (10, 14, 24, 235), ui.BORDER, radius=4)
+        ui.panel(surf, MINIMAP, (22, 17, 14, 235), ui.BORDER, radius=4)
         pts_top, pts_bot = [], []
         x = -mapdata.LANE_END
         while x <= mapdata.LANE_END + 1e-6:
@@ -1452,7 +2701,18 @@ class GameScene(Scene):
             pts_top.append(self.world_to_minimap(x, -hw))
             pts_bot.append(self.world_to_minimap(x, hw))
             x += 4.0
-        pygame.draw.polygon(surf, (70, 85, 105), pts_top + pts_bot[::-1])
+        pygame.draw.polygon(surf, (128, 110, 84), pts_top + pts_bot[::-1])             # 사암 길
+        # 부활 지점 원과 주위 기둥
+        for team in (BLUE, RED):
+            fx, fz = mapdata.fountain_pos(team)
+            fc = ui.TEAM_UI[team]
+            c0 = self.world_to_minimap(fx, fz)
+            pygame.draw.ellipse(surf, tuple(int(v * 0.45) for v in fc),
+                                self.minimap_ellipse(fx, fz, 5.5))
+            pygame.draw.ellipse(surf, fc, self.minimap_ellipse(fx, fz, 5.5), 1)
+            for px, pz in mapdata.fountain_pillars(team):
+                pp = self.world_to_minimap(px, pz)
+                pygame.draw.circle(surf, (205, 195, 170), pp, 2)
         for sid, s in self.structs.items():
             st = self.struct_state[sid]
             col = ui.TEAM_UI[s["tm"]] if st[2] else (60, 60, 70)
@@ -1468,13 +2728,17 @@ class GameScene(Scene):
             pygame.draw.rect(surf, col, (p[0] - 1, p[1] - 1, 2, 2))
         if self.minimap_fog:
             surf.blit(self.minimap_fog[0], self.minimap_fog[1])
-        for cid, e in self.champs.items():
+        for cid, e in sorted(self.champs.items(), key=lambda kv: kv[0] == self.my_id):     # 내 챔피언이 맨 위
             if not e.d or e.d["dead"] or not e.visible:
                 continue
             info = self.champ_info[cid]
             p = self.world_to_minimap(e.x, e.z)
-            pygame.draw.circle(surf, ui.TEAM_UI[info["tm"]], p, 5)
-            pygame.draw.circle(surf, (255, 230, 100) if cid == self.my_id else (20, 20, 30), p, 5, 2 if cid == self.my_id else 1)
+            mine = cid == self.my_id
+            data = gamedata.champion(info["c"]) or {}
+            # 각 챔피언의 얼굴 아이콘 (테두리는 팀 색, 내 챔피언은 금색으로 더 굵게)
+            ring_col = ui.GREEN_C if mine else ui.TEAM_UI[info["tm"]]
+            draw_round_portrait(surf, info["c"], p, 8, ring_col, color=data.get("color", (160, 170, 190)), ring_w=0)
+            draw_hp_ring(surf, p, 11, e.d["hp"] / max(1, e.d["mhp"]), ring_col, 3)
         # 내 이동 경로
         me = self.champs.get(self.my_id)
         if self.move_dest and me:
@@ -1486,6 +2750,18 @@ class GameScene(Scene):
             k = (time.time() - self.click_marker[2]) / 0.45
             p = self.world_to_minimap(self.click_marker[0], self.click_marker[1])
             pygame.draw.circle(surf, MOVE_COLOR_UI, p, int(9 - 6 * k), 1)
+        rngi = getattr(self, "ind_range", None)
+        if rngi:
+            ix, iz, ir, ic = rngi
+            col8 = tuple(int(v * 255) for v in ic)
+            rect = self.minimap_ellipse(ix, iz, ir)
+            ov = pygame.Surface(rect.size, pygame.SRCALPHA) if rect.w > 1 and rect.h > 1 else None
+            if ov:
+                pygame.draw.ellipse(ov, (*col8, 45), ov.get_rect())
+                pygame.draw.ellipse(ov, (*col8, 230), ov.get_rect(), 1)
+                surf.set_clip(MINIMAP.inflate(-4, -4))
+                surf.blit(ov, rect.topleft)
+                surf.set_clip(None)
         cam = self.app.renderer.camera
         a = self.world_to_minimap(cam.tx - 14, cam.tz - 8)
         b = self.world_to_minimap(cam.tx + 14, cam.tz + 8)
@@ -1578,13 +2854,7 @@ class GameScene(Scene):
                     pygame.draw.rect(surf, ui.HIGHLIGHT, row, 1, border_radius=6)
                 # 초상화 + 레벨 (사망 시 어둡게 + 부활 시간)
                 pc = (row.x + 38, row.centery)
-                face = tuple(ch.get("color", (200, 200, 200)))
-                if dead:
-                    face = tuple(v // 3 for v in face)
-                pygame.draw.circle(surf, face, pc, 26)
-                pygame.draw.circle(surf, ui.TEAM_UI[team], pc, 26, 2)
-                ui.text(surf, ch["name"][0], pc, 22, (20, 30, 50) if not dead else (90, 90, 100), anchor="center",
-                        bold=True, shadow=False)
+                draw_round_portrait(surf, info["c"], pc, 26, ui.TEAM_UI[team], dead, ch.get("color", (200, 200, 200)))
                 if dead:
                     ui.text(surf, f"{math.ceil(rt)}", pc, 18, ui.RED_C, anchor="center", bold=True)
                 lvp = (pc[0] + 19, pc[1] + 19)

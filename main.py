@@ -1,6 +1,6 @@
 """칼바람 아레나 클라이언트 실행.
 
-    py main.py
+    .venv\Scripts\python.exe main.py
 """
 import argparse
 import os

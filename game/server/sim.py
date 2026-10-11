@@ -6,29 +6,36 @@
 - 시야: 팀마다 챔피언·미니언·구조물 주변만 보이고, 부쉬 안은 같은 부쉬 안에서만 보인다
 - 포탑 방패: 포탑 체력이 한 칸(1/5) 깎일 때마다 근처 적 챔피언에게 골드
 - 30초마다 미니언 웨이브, 억제기 파괴 시 슈퍼 미니언
-- 소환사 주문: D 점멸, F 표식(눈덩이)
+- 소환사 주문: 선택 화면에서 고른 두 개를 D / F 칸에 넣는다 (점멸·표식·회복·유체화·방어막·정화·탈진·점화)
+- 챔피언 스킬은 abilities.py 의 type 별 핸들러가 처리한다 (이 파일은 피해·상태이상·장판 같은 공통 규칙)
 """
 import math
+import types
 import random
 
 from ..shared import data as gamedata
 from ..shared import mapdata
 from ..shared.constants import (
-    ASSIST_GOLD_TOTAL, ASSIST_WINDOW, BLUE, FIRST_BLOOD_BONUS, FIRST_WAVE_TIME, FLASH_COOLDOWN,
-    FLASH_RANGE, FOUNTAIN_HEAL_PCT, FOUNTAIN_LASER_DPS, FOUNTAIN_LASER_RADIUS, FOUNTAIN_RADIUS, INHIBITOR_RESPAWN,
+    ASSIST_GOLD_TOTAL, ASSIST_WINDOW, BARRIER_BASE, BARRIER_PER_LEVEL, BARRIER_TIME, BLUE, CLEANSE_IMMUNE,
+    EXHAUST_DMG_REDUCE, EXHAUST_RANGE, EXHAUST_SLOW, EXHAUST_TIME, FIRST_BLOOD_BONUS, FIRST_WAVE_TIME,
+    FLASH_COOLDOWN, FLASH_RANGE, GHOST_SPEED_PCT, GHOST_TIME, HEAL_ALLY_RATIO, HEAL_BASE, HEAL_PER_LEVEL, HEAL_RANGE,
+    HEAL_SPEED_PCT, HEAL_SPEED_TIME, IGNITE_BASE, IGNITE_HEAL_CUT, IGNITE_PER_LEVEL, IGNITE_RANGE, IGNITE_TICK,
+    IGNITE_TIME, FOUNTAIN_HEAL_PCT, FOUNTAIN_LASER_DPS, FOUNTAIN_LASER_RADIUS, FOUNTAIN_RADIUS, INHIBITOR_RESPAWN,
     INVENTORY_SLOTS, KILL_GOLD, MARK_COOLDOWN, MARK_DASH_SPEED, MARK_RANGE, MARK_RECAST_TIME,
     MARK_SPEED, MAX_LEVEL, PASSIVE_GOLD_PER_SEC, PASSIVE_XP_PER_SEC, PLATE_SHARE_RANGE, RECALL_TIME, RED,
     RELIC_FIRST_SPAWN, RELIC_HEAL_PCT, RELIC_RADIUS, RELIC_RESPAWN, SELL_RATIO, SIGHT, WAVE_INTERVAL, XP_SHARE_RANGE,
     death_timer, xp_to_next,
 )
+from ..shared.spells import SPELLS
+from . import abilities
 from .bot import BotBrain
 from .entities import (
-    MINION_CODES, TURRET_MINION_DMG, Champion, GroundEffect, Minion, Projectile, Relic, Structure,
+    MINION_CODES, TURRET_MINION_DMG, Anchor, Champion, Minion, Projectile, Relic, Structure,
 )
 
 MINION_AGGRO = 7.0
 TURRET_PERIOD = 0.85
-TURRET_CHAMP_DMG = 85.0         # 포탑 → 챔피언 기본 피해 (+분당 2.5, 연속 공격 시 증가)
+TURRET_CHAMP_DMG = 128.0        # 포탑 → 챔피언 기본 피해 (+분당 2.5, 연속 공격 시 증가)
 SLOTS = ("Q", "W", "E", "R")
 
 
@@ -47,15 +54,21 @@ def other(team):
 
 class Simulation:
     def __init__(self, members):
-        """members: [{"key", "name", "team", "bot", "champ"}]"""
+        """members: [{"key", "name", "team", "bot", "champ", "spells"(생략하면 점멸·표식)}]"""
         self.time = 0.0
         self._next_id = 1
         self.champions = {}         # id -> Champion
         self.by_key = {}            # member_key -> Champion
         self.minions = {}
         self.structures = {}
+        # 우물 제단 기둥: 포탑처럼 길을 막는 고정 장애물 (x, z, radius 만 있으면 된다)
+        self.pillars = [types.SimpleNamespace(x=px, z=pz, radius=mapdata.PILLAR_RADIUS)
+                        for team in (0, 1) for px, pz in mapdata.fountain_pillars(team)]
         self.projectiles = {}
         self.effects = {}
+        self.zones = {}             # 성역·정원·덫·감옥 같은 장판 (Zone)
+        self.anchors = {}           # 줄 말뚝 (Anchor)
+        self.scheduled = []         # [(실행 시각, 함수)] 시간차로 일어나는 일 (칼 던지기 등)
         self.relics = []
         self.events = []
         self.help_calls = []        # (만료, 가해 챔피언 id, 피해 팀, x, z)
@@ -83,7 +96,7 @@ class Simulation:
             ms = [m for m in members if m["team"] == team]
             pts = mapdata.spawn_points(team, len(ms))
             for m, (x, z) in zip(ms, pts):
-                c = Champion(self.new_id(), team, x, z, m["key"], m["name"], m["champ"], m["bot"])
+                c = Champion(self.new_id(), team, x, z, m["key"], m["name"], m["champ"], m["bot"], m.get("spells"))
                 c.facing = 0.0 if team == BLUE else math.pi
                 self.champions[c.id] = c
                 self.by_key[m["key"]] = c
@@ -99,7 +112,12 @@ class Simulation:
         self.events.append(kw)
 
     def unit(self, uid):
-        return (self.champions.get(uid) or self.minions.get(uid) or self.structures.get(uid))
+        return (self.champions.get(uid) or self.minions.get(uid) or self.structures.get(uid)
+                or self.anchors.get(uid))
+
+    def schedule(self, delay, fn):
+        """delay 초 뒤에 fn(sim) 을 실행한다."""
+        self.scheduled.append((self.time + delay, fn))
 
     def structure_by_key(self, team, key):
         for s in self.structures.values():
@@ -120,6 +138,8 @@ class Simulation:
         """by_team 팀이 u 를 공격 대상으로 삼을 수 있는가."""
         if u is None or u.team == by_team or not u.alive:
             return False
+        if u.untargetable(self.time):
+            return False
         if isinstance(u, Champion):
             return not u.dead
         if isinstance(u, Structure):
@@ -127,16 +147,29 @@ class Simulation:
         return True
 
     def enemies_in_radius(self, team, x, z, radius, champions=True, minions=True):
+        t = self.time
         out = []
         if champions:
             for c in self.champions.values():
-                if c.team != team and not c.dead and math.hypot(c.x - x, c.z - z) <= radius + c.radius:
+                if (c.team != team and not c.dead and not c.untargetable(t)
+                        and math.hypot(c.x - x, c.z - z) <= radius + c.radius):
                     out.append(c)
         if minions:
             for m in self.minions.values():
                 if m.team != team and math.hypot(m.x - x, m.z - z) <= radius + m.radius:
                     out.append(m)
+            for a in self.anchors.values():                 # 적 고치도 스킬 범위에 맞는다
+                if getattr(a, "cocoon", False) and a.team != team and a.alive and math.hypot(a.x - x, a.z - z) <= radius + a.radius:
+                    out.append(a)
         return out
+
+    def allies_in_radius(self, team, x, z, radius):
+        """같은 팀 챔피언 (자신 포함)."""
+        return [c for c in self.champions.values()
+                if c.team == team and not c.dead and math.hypot(c.x - x, c.z - z) <= radius + c.radius]
+
+    def is_caged(self, u):
+        return u.caged_until > self.time
 
     # ------------------------------------------------------------------ 시야
     def observers(self, team):
@@ -168,7 +201,7 @@ class Simulation:
             obs = self.observers(team)
             vis = set()
             for c in self.champions.values():
-                if c.team != team and not c.dead and self.seen_by(obs, c.x, c.z):
+                if c.team != team and not c.dead and (self.seen_by(obs, c.x, c.z) or c.revealed_until > self.time):
                     vis.add(c.id)
             for m in self.minions.values():
                 if m.team != team and self.seen_by(obs, m.x, m.z):
@@ -178,7 +211,7 @@ class Simulation:
 
     def can_see(self, team, u):
         """team 이 유닛 u 를 볼 수 있는가 (아군과 구조물은 항상 보임)."""
-        return u.team == team or isinstance(u, Structure) or u.id in self.visible[team]
+        return u.team == team or isinstance(u, (Structure, Anchor)) or u.id in self.visible[team]
 
     def in_fountain(self, c):
         fx, fz = mapdata.fountain_pos(c.team)
@@ -190,7 +223,7 @@ class Simulation:
     # ------------------------------------------------------------------ 이동
     def obstacles(self):
         # 부서진 구조물(잔해)도 살아 있을 때와 같은 크기로 길을 막는다
-        return list(self.structures.values())
+        return list(self.structures.values()) + self.pillars
 
     def move_unit(self, u, tx, tz, speed, dt, stop_dist=0.0):
         """u 를 (tx, tz) 쪽으로 이동. 도착하면 True."""
@@ -200,8 +233,9 @@ class Simulation:
             return True
         step = min(speed * dt, d - stop_dist)
         ux, uz = dx / d, dz / d
-        # 앞에 구조물이 있으면 옆으로 비켜간다
-        for s in self.obstacles():
+        ghost = u.ghost(self.time)
+        # 앞에 구조물이 있으면 옆으로 비켜간다 (망령 상태는 그냥 통과)
+        for s in ([] if ghost else self.obstacles()):
             ox, oz = s.x - u.x, s.z - u.z
             along = ox * ux + oz * uz
             if 0.0 < along < s.radius + 3.0 and along < d:
@@ -217,13 +251,13 @@ class Simulation:
                     n = math.hypot(ux, uz) or 1.0
                     ux, uz = ux / n, uz / n
         nx, nz = u.x + ux * step, u.z + uz * step
-        u.x, u.z = self.resolve_position(nx, nz, u.radius)
+        u.x, u.z = self.resolve_position(nx, nz, u.radius, ghost)
         u.facing = math.atan2(uz, ux)
         return False
 
-    def resolve_position(self, x, z, radius):
+    def resolve_position(self, x, z, radius, ghost=False):
         x, z = mapdata.clamp_to_map(x, z, radius)
-        for s in self.obstacles():
+        for s in ([] if ghost else self.obstacles()):
             dx, dz = x - s.x, z - s.z
             d = math.hypot(dx, dz)
             min_d = s.radius + radius
@@ -243,9 +277,28 @@ class Simulation:
             return 0.0
         if isinstance(target, Champion) and target.dead:
             return 0.0
+        if isinstance(target, Anchor):
+            if getattr(target, "cocoon", False):
+                # 고치: 평타든 스킬이든 받은 피해만큼 체력이 깎인다 (방어력 없음)
+                target.hp -= amount
+                if target.hp <= 0:
+                    target.hp = 0
+                    self.on_death(target, src)
+                return amount
+            # 줄 말뚝은 기본 공격으로만 부서지고, 한 번에 1씩 깎인다 (3번이면 파괴)
+            if basic and not ability:
+                target.hp -= 1.0
+                if target.hp <= 0:
+                    target.hp = 0
+                    self.on_death(target, src)
+            return 0.0
         if isinstance(target, Structure):
             if ability or not self.vulnerable(target):
                 return 0.0
+        if target.untargetable(self.time):
+            return 0.0
+        if isinstance(src, Champion) and self.time < src.exhaust_until:
+            amount *= 1.0 - EXHAUST_DMG_REDUCE              # 탈진: 주는 피해 감소
         if dtype == "physical":
             res = target.armor
         elif dtype == "magic":
@@ -258,7 +311,15 @@ class Simulation:
             dmg = amount * 100.0 / (100.0 + res)
         else:
             dmg = amount * (2.0 - 100.0 / (100.0 - res))
-        target.hp -= dmg
+        taken = dmg                                   # 방어력 적용 후, 보호막·메아리 이전
+
+        # 메아리: 받는 피해의 일부를 바로 받지 않고 시간에 걸쳐 나눠 받는다
+        if isinstance(target, Champion) and target.echo and self.time < target.echo["until"]:
+            deferred = dmg * target.echo["pct"]
+            dmg -= deferred
+            target.deferred.append({"left": deferred, "rate": deferred / target.echo["time"], "src": src})
+
+        self.apply_hp_loss(target, dmg)
         if isinstance(target, Champion) and dmg > 0:
             target.recall_at = None         # 피해를 받으면 귀환 취소
             target.last_hit_at = self.time
@@ -267,19 +328,84 @@ class Simulation:
                 self.break_plate(target)
 
         src_id = src.id if src is not None else 0
-        self.event(e="dmg", s=src_id, d=target.id, v=int(round(dmg)), ty=dtype[0])
+        if basic:
+            self.event(e="dmg", s=src_id, d=target.id, v=int(round(taken)), ty=dtype[0], b=1)    # b: 기본 공격 (효과음용)
+        else:
+            self.event(e="dmg", s=src_id, d=target.id, v=int(round(taken)), ty=dtype[0])
 
         if isinstance(src, Champion):
             if isinstance(target, Champion):
                 target.damage_log[src.id] = self.time
                 self.help_calls.append((self.time + 2.0, src.id, target.team, target.x, target.z))
             if basic and src.stats.get("life_steal", 0) > 0 and not src.dead:
-                src.hp = min(src.max_hp, src.hp + dmg * src.stats["life_steal"])
+                self.heal(src, taken * src.stats["life_steal"])
+            # 흡혈 스킬: 챔피언에게는 전부, 미니언에게는 절반만 회복
+            if (src.vamp and self.time < src.vamp["until"] and not src.dead
+                    and isinstance(target, (Champion, Minion))):
+                k = 1.0 if isinstance(target, Champion) else 0.5
+                self.heal(src, taken * src.vamp["pct"] * k, src)
+
+        # 반격의 방어막: 받은 피해에 비례해 보호막이 쌓인다
+        if (isinstance(target, Champion) and target.counter and self.time < target.counter["until"]
+                and target.hp > 0):
+            self.add_shield(target, taken * target.counter["ratio"], target.counter["life"], target)
 
         if target.hp <= 0:
             target.hp = 0
             self.on_death(target, src)
-        return dmg
+        return taken
+
+    def apply_hp_loss(self, target, dmg):
+        """보호막을 먼저 깎고 남은 만큼 체력을 줄인다. 죽음 처리는 부르는 쪽이 한다."""
+        t = self.time
+        rem = dmg
+        if target.shields:
+            for sh in list(target.shields):
+                if sh["until"] <= t:
+                    target.shields.remove(sh)
+                    continue
+                take = min(rem, sh["amount"])
+                sh["amount"] -= take
+                rem -= take
+                if sh["amount"] <= 0.01:
+                    target.shields.remove(sh)
+                    cb = sh.get("on_break")
+                    if cb:
+                        cb(self, target)
+                if rem <= 0:
+                    break
+        if rem > 0:
+            target.hp -= rem
+            if isinstance(target, Champion) and t < target.undying_until and target.hp < 1.0:
+                target.hp = 1.0                     # 불멸: 죽지 않는다
+        return rem
+
+    def tick_deferred(self, c, dt):
+        """메아리로 미뤄 둔 피해를 시간에 따라 입는다 (방어력은 이미 적용된 피해)."""
+        if not c.deferred:
+            return
+        total, src = 0.0, None
+        for d in c.deferred:
+            amt = min(d["left"], d["rate"] * dt)
+            d["left"] -= amt
+            total += amt
+            src = d["src"]
+        c.deferred = [d for d in c.deferred if d["left"] > 0.01]
+        if total > 0:
+            self.apply_hp_loss(c, total)
+            c.last_hit_at = self.time
+            if c.hp <= 0:
+                c.hp = 0
+                self.on_death(c, src)
+
+    def add_shield(self, target, amount, duration, src=None, on_break=None):
+        """보호막을 건다. 대종에 갇힌 대상은 다른 사람이 건 보호막을 받을 수 없다."""
+        if amount <= 0 or target is None or not target.alive:
+            return False
+        if src is not target and self.is_caged(target):
+            return False
+        target.shields.append({"amount": amount, "until": self.time + duration, "on_break": on_break})
+        return True
 
     def break_plate(self, s):
         """포탑 방패 한 칸 파괴: 근처 적 챔피언들이 골드를 나눠 갖는다."""
@@ -293,8 +419,20 @@ class Simulation:
                 self.event(e="gold", d=c.id, v=int(round(share)), x=round(s.x, 2), z=round(s.z, 2))
         self.event(e="fx", fx="plate", x=round(s.x, 2), z=round(s.z, 2))
 
-    def heal(self, c, amount):
+    def heal(self, c, amount, src=None, quiet=False):
+        """체력 회복. 대종에 갇힌 대상은 다른 사람의 회복을 받을 수 없다."""
+        if amount <= 0 or not c.alive or getattr(c, "dead", False):
+            return 0.0
+        if src is not None and src is not c and self.is_caged(c):
+            return 0.0
+        if getattr(c, "ignite", None):
+            amount *= 1.0 - IGNITE_HEAL_CUT                   # 점화: 받는 회복량 감소
+        before = c.hp
         c.hp = min(c.max_hp, c.hp + amount)
+        gained = c.hp - before
+        if src is not None and not quiet and gained >= 1.0:
+            self.event(e="heal", d=c.id, v=int(round(gained)))
+        return gained
 
     # ------------------------------------------------------------------ 처치
     def on_death(self, target, killer):
@@ -304,7 +442,7 @@ class Simulation:
             target.alive = False
             self.minions.pop(target.id, None)
             self.gone_minions.append(target.id)
-            if isinstance(killer, Champion):
+            if isinstance(killer, Champion) and target.mtype != "spiderling":
                 killer.gold += target.gold
                 killer.cs += 1
                 self.event(e="gold", d=killer.id, v=target.gold, x=round(target.x, 2), z=round(target.z, 2))
@@ -314,6 +452,8 @@ class Simulation:
                 self.give_xp(c, target.xp / len(near))
         elif isinstance(target, Structure):
             self.structure_destroyed(target, killer)
+        elif isinstance(target, Anchor):
+            abilities.anchor_destroyed(self, target)
 
     def champion_died(self, victim, killer):
         victim.dead = True
@@ -326,6 +466,19 @@ class Simulation:
         victim.empower = None
         victim.slows = []
         victim.stun_until = victim.root_until = 0.0
+        victim.cleanse(self.time)
+        victim.shields = []
+        victim.deferred = []
+        victim.counter = victim.echo = victim.vamp = None
+        victim.marks = {}
+        victim.silence_until = victim.airborne_until = 0.0
+        victim.ghost_until = victim.untarget_until = victim.undying_until = victim.cc_immune_until = 0.0
+        victim.caged_until = victim.revealed_until = 0.0
+        victim.pierce_until = victim.q_hit_until = 0.0
+        victim.exhaust_until = 0.0
+        victim.ignite = None
+        if victim.rope:
+            abilities.end_rope(self, victim, land=False)
 
         recent = {cid: t for cid, t in victim.damage_log.items() if self.time - t <= ASSIST_WINDOW}
         victim.damage_log = {}
@@ -367,7 +520,7 @@ class Simulation:
     def structure_destroyed(self, s, killer):
         s.alive = False
         s.hp = 0
-        names = {"turret": "포탑", "inhibitor": "억제기", "nexus": "넥서스"}
+        names = {"turret": "포탑이", "inhibitor": "억제기가", "nexus": "넥서스가"}
         enemy = other(s.team)
         if s.skind == "turret":
             for c in self.champions.values():
@@ -378,7 +531,7 @@ class Simulation:
             for c in self.champions.values():
                 if c.team == enemy:
                     c.gold += 50
-        self.event(e="announce", text=f"{'블루' if s.team == BLUE else '레드'}팀 {names[s.skind]}이(가) 파괴되었습니다!")
+        self.event(e="announce", text=f"{'블루' if s.team == BLUE else '레드'}팀 {names[s.skind]} 파괴되었습니다!")
         if s.skind == "nexus":
             self.winner = enemy
             self.event(e="victory", team=enemy)
@@ -396,6 +549,13 @@ class Simulation:
         if c.level >= MAX_LEVEL:
             c.xp = 0
 
+    # ------------------------------------------------------------------ 테스트용 치트 (F6 체력 · F7 마나 · F8 쿨타임 · F9 레벨)
+    def cheat_levelup(self, c):
+        """F9: 레벨을 1 올린다 (스킬 포인트도 1). 최대 레벨이면 아무 일도 없다."""
+        if c.dead or c.level >= MAX_LEVEL:
+            return
+        self.give_xp(c, xp_to_next(c.level) - c.xp)
+
     # ------------------------------------------------------------------ 명령
     def handle_command(self, key, msg):
         c = self.by_key.get(key)
@@ -405,6 +565,14 @@ class Simulation:
         try:
             if cmd == "level":
                 self.level_ability(c, msg["slot"])
+            elif cmd == "cheat_lv":
+                self.cheat_levelup(c)
+            elif cmd == "cheat_hp" and not c.dead:
+                c.hp = c.max_hp
+            elif cmd == "cheat_mana" and not c.dead:
+                c.mana = c.max_mana
+            elif cmd == "cheat_cd":
+                c.ready_at = {k: 0.0 for k in c.ready_at}
             elif cmd == "buy":
                 self.buy(c, msg["item"])
             elif cmd == "sell":
@@ -429,10 +597,7 @@ class Simulation:
             elif cmd == "cast":
                 self.cast(c, msg["slot"], float(msg["x"]), float(msg["z"]))
             elif cmd == "spell":
-                if msg["slot"] == "D":
-                    self.flash(c, float(msg["x"]), float(msg["z"]))
-                elif msg["slot"] == "F":
-                    self.mark(c, float(msg["x"]), float(msg["z"]))
+                self.cast_spell(c, msg["slot"], float(msg["x"]), float(msg["z"]))
         except (KeyError, TypeError, ValueError):
             pass
 
@@ -445,7 +610,7 @@ class Simulation:
         c.move_target = mapdata.clamp_to_map(x, z, c.radius)
 
     def cmd_attack(self, c, uid):
-        if c.dash:
+        if c.dash or c.rope:
             return
         target = self.unit(uid)
         if not self.targetable(target, c.team) or not self.can_see(c.team, target):
@@ -458,7 +623,7 @@ class Simulation:
 
     def recall(self, c):
         """귀환 시작: RECALL_TIME 동안 가만히 있으면 우물로 이동 (이동·공격·스킬·피해·기절 시 취소)."""
-        if c.dead or c.dash or c.recall_at is not None or c.stunned(self.time):
+        if c.dead or c.dash or c.rope or c.recall_at is not None or c.stunned(self.time):
             return
         c.clear_orders()
         c.recall_at = self.time + RECALL_TIME
@@ -490,91 +655,149 @@ class Simulation:
 
     # ------------------------------------------------------------------ 스킬
     def ability_damage(self, c, ab, rank):
-        base = ab.get("damage", [0])[rank - 1]
+        base = gamedata.rank_value(ab, "damage", rank, 0.0)
         return (base + ab.get("ad_ratio", 0) * c.stats["ad"] + ab.get("bonus_ad_ratio", 0) * c.stats["bonus_ad"]
                 + ab.get("ap_ratio", 0) * c.stats["ap"])
 
+    def ability_amount(self, c, ab, rank, key):
+        """damage 외의 수치(회복량·보호막 등). key 값 + key_ap × 주문력 + key_ad × 공격력."""
+        return (gamedata.rank_value(ab, key, rank, 0.0) + ab.get(key + "_ap", 0) * c.stats["ap"]
+                + ab.get(key + "_ad", 0) * c.stats["ad"])
+
     def cast(self, c, slot, x, z):
-        if slot not in SLOTS or c.dead or c.stunned(self.time) or c.dash:
-            return
+        t = self.time
+        if slot not in SLOTS or c.dead or c.stunned(t) or c.dash or c.silenced(t):
+            return False
+        if c.rope and slot not in ("W", "R"):
+            return False                # 줄 위에서는 W(칼 내리꽂기)와 R(내려오기)만
         rank = c.ranks[slot]
-        if rank <= 0 or self.time < c.ready_at[slot]:
-            return
+        if rank <= 0 or t < c.ready_at[slot]:
+            return False
         ab = c.data["abilities"][slot]
-        cost = ab.get("mana", [0])[rank - 1]
+        handler = abilities.HANDLERS.get(ab["type"])
+        if handler is None:
+            return False
+        recast = abilities.can_recast(self, c, ab)      # 재시전은 마나가 들지 않는다
+        cost = 0 if recast else gamedata.rank_value(ab, "mana", rank, 0)
         if c.mana < cost:
-            return
+            return False
         dx, dz = x - c.x, z - c.z
         d = math.hypot(dx, dz)
         if d < 1e-3:
             dx, dz, d = math.cos(c.facing), math.sin(c.facing), 1.0
-        ux, uz = dx / d, dz / d
-        typ = ab["type"]
-
-        if typ == "skillshot":
-            p = Projectile(self.new_id(), c.team, c, c.x + ux * 0.6, c.z + uz * 0.6, ab.get("style", "bolt"), ab["speed"])
-            p.dx, p.dz = ux, uz
-            p.remaining = ab["range"]
-            p.width = ab["width"]
-            dmg = self.ability_damage(c, ab, rank)
-            dtype = ab.get("damage_type", "physical")
-
-            def on_hit(sim, target, c=c, dmg=dmg, dtype=dtype, ab=ab):
-                sim.deal_damage(c, target, dmg, dtype, ability=True)
-                if ab.get("slow"):
-                    target.apply_slow(sim.time, ab["slow"], ab.get("slow_duration", 1.0))
-                if ab.get("stun"):
-                    target.apply_stun(sim.time, ab["stun"])
-            p.on_hit = on_hit
-            self.projectiles[p.id] = p
-        elif typ == "self_buff":
-            c.buffs.append({
-                "until": self.time + ab["duration"],
-                "attack_speed_pct": ab.get("attack_speed_pct", [0] * 5)[rank - 1],
-                "move_speed_pct": ab.get("move_speed_pct", [0] * 5)[rank - 1],
-            })
-            c.recompute_stats(self.time)
-        elif typ == "dash":
-            if c.rooted(self.time):
-                return
-            dist = min(d, ab["range"])
-            tx, tz = self.resolve_position(c.x + ux * dist, c.z + uz * dist, c.radius)
-            emp = None
-            if ab.get("empower_magic"):
-                emp = {"magic": ab["empower_magic"][rank - 1] + ab.get("empower_ap_ratio", 0) * c.stats["ap"],
-                       "duration": ab.get("empower_duration", 3.0)}
-            c.clear_orders()
-            c.dash = {"x": tx, "z": tz, "speed": ab["speed"], "follow": None, "empower": emp}
-        elif typ == "ground_aoe":
-            dist = min(d, ab["range"])
-            gx, gz = c.x + ux * dist, c.z + uz * dist
-            dmg = self.ability_damage(c, ab, rank)
-            dtype = ab.get("damage_type", "magic")
-
-            def on_trigger(sim, eff, c=c, dmg=dmg, dtype=dtype, ab=ab):
-                for t in sim.enemies_in_radius(eff.team, eff.x, eff.z, eff.radius):
-                    sim.deal_damage(c, t, dmg, dtype, ability=True)
-                    if ab.get("stun"):
-                        t.apply_stun(sim.time, ab["stun"])
-                    if ab.get("slow"):
-                        t.apply_slow(sim.time, ab["slow"], ab.get("slow_duration", 1.0))
-                sim.event(e="fx", fx=eff.style + "_burst", x=round(eff.x, 2), z=round(eff.z, 2), r=eff.radius)
-            eff = GroundEffect(self.new_id(), c.team, c, gx, gz, ab["radius"], self.time + ab.get("delay", 0.5),
-                               ab.get("style", "aoe"), on_trigger)
-            self.effects[eff.id] = eff
-        else:
-            return
+        cx = abilities.Cast(self, c, slot, ab, rank, x, z, dx / d, dz / d, d)
+        if not handler(cx):
+            return False
 
         c.mana -= cost
         c.recall_at = None
-        c.ready_at[slot] = self.time + c.cooldown_of(slot)
+        c.ready_at[slot] = t + (cx.cooldown if cx.cooldown is not None else c.cooldown_of(slot))
         c.windup = None
-        c.cast_anim_until = self.time + 0.3
+        c.cast_anim_until = t + 0.3
         self.face(c, x, z)
         self.event(e="cast", d=c.id, slot=slot)
+        return True
 
-    def flash(self, c, x, z):
-        if self.time < c.ready_at["D"] or c.stunned(self.time):
+    def cast_spell(self, c, slot, x, z):
+        """D / F 칸에 들어 있는 소환사 주문을 쓴다. (x, z) 는 마우스가 가리키는 바닥 지점."""
+        if slot not in ("D", "F"):
+            return
+        spell = c.spells[0 if slot == "D" else 1]
+        if spell == "flash":
+            self.flash(c, x, z, slot)
+        elif spell == "mark":
+            self.mark(c, x, z, slot)
+        else:
+            fn = getattr(self, "spell_" + spell, None)
+            if fn is not None and self.time >= c.ready_at[slot] and fn(c, x, z):
+                c.ready_at[slot] = self.time + SPELLS[spell]["cooldown"]
+                c.recall_at = None
+                self.event(e="fx", fx="spell", style=spell, x=round(c.x, 2), z=round(c.z, 2), tm=c.team)
+
+    def pick_enemy_champion(self, c, x, z, rng):
+        """사거리 안, 볼 수 있는 적 챔피언 중 (x, z) 에 가장 가까운 한 명 (없으면 None)."""
+        best, best_d = None, 1e9
+        for e in self.champions.values():
+            if e.team == c.team:
+                continue
+            if not self.targetable(e, c.team) or not self.can_see(c.team, e):
+                continue
+            if c.dist_to(e) > rng + e.radius:
+                continue
+            d = math.hypot(e.x - x, e.z - z)
+            if d < best_d:
+                best, best_d = e, d
+        return best
+
+    def add_speed_buff(self, u, pct, duration):
+        u.buffs.append({"until": self.time + duration, "move_speed_pct": pct})
+        u.recompute_stats(self.time)
+
+    def spell_heal(self, c, x, z):
+        amount = HEAL_BASE + HEAL_PER_LEVEL * c.level
+        self.heal(c, amount, c)
+        self.add_speed_buff(c, HEAL_SPEED_PCT, HEAL_SPEED_TIME)
+        ally, ratio = None, 2.0
+        for a in self.champions.values():
+            if a is c or a.team != c.team or a.dead or c.dist_to(a) > HEAL_RANGE:
+                continue
+            r = a.hp / max(1.0, a.max_hp)
+            if r < ratio:
+                ally, ratio = a, r
+        if ally is not None:
+            self.heal(ally, amount * HEAL_ALLY_RATIO, c)
+            self.add_speed_buff(ally, HEAL_SPEED_PCT, HEAL_SPEED_TIME)
+            self.event(e="fx", fx="spell", style="heal", x=round(ally.x, 2), z=round(ally.z, 2), tm=c.team)
+        return True
+
+    def spell_ghost(self, c, x, z):
+        self.add_speed_buff(c, GHOST_SPEED_PCT, GHOST_TIME)
+        return True
+
+    def spell_barrier(self, c, x, z):
+        self.add_shield(c, BARRIER_BASE + BARRIER_PER_LEVEL * c.level, BARRIER_TIME, c)
+        return True
+
+    def spell_cleanse(self, c, x, z):
+        c.cleanse(self.time)
+        c.cc_immune_until = max(c.cc_immune_until, self.time + CLEANSE_IMMUNE)
+        return True
+
+    def spell_exhaust(self, c, x, z):
+        tg = self.pick_enemy_champion(c, x, z, EXHAUST_RANGE)
+        if tg is None:
+            return False
+        tg.exhaust_until = self.time + EXHAUST_TIME
+        tg.apply_slow(self.time, EXHAUST_SLOW, EXHAUST_TIME)
+        self.event(e="fx", fx="spell", style="exhaust", x=round(tg.x, 2), z=round(tg.z, 2), tm=c.team)
+        return True
+
+    def spell_ignite(self, c, x, z):
+        tg = self.pick_enemy_champion(c, x, z, IGNITE_RANGE)
+        if tg is None:
+            return False
+        total = IGNITE_BASE + IGNITE_PER_LEVEL * c.level
+        tg.ignite = {"until": self.time + IGNITE_TIME, "next": self.time + IGNITE_TICK,
+                     "tick": total * IGNITE_TICK / IGNITE_TIME, "src": c.id}
+        self.event(e="fx", fx="spell", style="ignite", x=round(tg.x, 2), z=round(tg.z, 2), tm=c.team)
+        return True
+
+    def tick_ignite(self, c):
+        ig = c.ignite
+        if ig is None:
+            return
+        t = self.time
+        while ig["next"] <= t and ig["next"] <= ig["until"] + 1e-6:
+            ig["next"] += IGNITE_TICK
+            src = self.champions.get(ig["src"])
+            self.deal_damage(src, c, ig["tick"], "true", ability=True)
+            if c.dead:
+                break
+        if c.dead or t >= ig["until"]:
+            c.ignite = None
+
+    def flash(self, c, x, z, slot="D"):
+        if self.time < c.ready_at[slot] or c.stunned(self.time) or c.rope:
             return
         dx, dz = x - c.x, z - c.z
         d = math.hypot(dx, dz)
@@ -586,11 +809,11 @@ class Simulation:
         c.dash = None
         c.windup = None
         c.recall_at = None
-        c.ready_at["D"] = self.time + FLASH_COOLDOWN
+        c.ready_at[slot] = self.time + FLASH_COOLDOWN
         self.face(c, x, z)
-        self.event(e="fx", fx="flash", x=round(ox, 2), z=round(oz, 2), x2=round(c.x, 2), z2=round(c.z, 2))
+        self.event(e="fx", fx="flash", x=round(ox, 2), z=round(oz, 2), x2=round(c.x, 2), z2=round(c.z, 2), tm=c.team)
 
-    def mark(self, c, x, z):
+    def mark(self, c, x, z, slot="F"):
         # 표식 재사용: 맞힌 대상에게 돌진
         if c.mark and self.time <= c.mark[1]:
             target = self.unit(c.mark[0])
@@ -600,7 +823,7 @@ class Simulation:
                 c.recall_at = None
                 c.dash = {"x": target.x, "z": target.z, "speed": MARK_DASH_SPEED, "follow": target.id, "empower": None}
             return
-        if self.time < c.ready_at["F"] or c.stunned(self.time):
+        if self.time < c.ready_at[slot] or c.stunned(self.time) or c.rope:
             return
         dx, dz = x - c.x, z - c.z
         d = math.hypot(dx, dz)
@@ -617,16 +840,18 @@ class Simulation:
         p.on_hit = on_hit
         self.projectiles[p.id] = p
         c.recall_at = None
-        c.ready_at["F"] = self.time + MARK_COOLDOWN
+        c.ready_at[slot] = self.time + MARK_COOLDOWN
         self.face(c, x, z)
 
     # ------------------------------------------------------------------ 기본 공격
-    def basic_attack_payload(self, c, target):
+    def basic_attack_payload(self, c, target, secondary=False):
         dmg = c.stats["ad"]
         crit = self.rng.random() < c.stats["crit"]
         if crit:
             dmg *= 1.75
         self.deal_damage(c, target, dmg, "physical", basic=True)
+        if secondary or isinstance(target, Anchor):
+            return
         if not target.alive or (isinstance(target, Champion) and target.dead):
             return
         c.attack_count += 1
@@ -638,12 +863,38 @@ class Simulation:
             if passive.get("slow") and not isinstance(target, Structure):
                 target.apply_slow(self.time, passive["slow"], passive.get("slow_duration", 1.0))
         if c.empower and self.time <= c.empower["until"]:
-            self.deal_damage(c, target, c.empower["magic"], "magic")
+            self.deal_damage(c, target, c.empower["dmg"], c.empower.get("dtype", "magic"))
             c.empower = None
+
+    def basic_hit(self, c, target, pierce=False):
+        """기본 공격 적중. 관통 상태면 뒤에 있는 적도 같은 피해를 입는다."""
+        self.basic_attack_payload(c, target)
+        if not pierce or isinstance(target, (Structure, Anchor)):
+            return
+        dx, dz = target.x - c.x, target.z - c.z
+        d = math.hypot(dx, dz) or 1.0
+        ux, uz = dx / d, dz / d
+        for u in list(self.champions.values()) + list(self.minions.values()):
+            if u is target or not self.targetable(u, c.team):
+                continue
+            rx, rz = u.x - target.x, u.z - target.z
+            along = rx * ux + rz * uz
+            perp = abs(-rx * uz + rz * ux)
+            if 0.0 < along <= 4.0 and perp <= 0.5 + u.radius:
+                self.basic_attack_payload(c, u, secondary=True)
+        self.event(e="fx", fx="pierce", x=round(target.x, 2), z=round(target.z, 2),
+                   x2=round(target.x + ux * 4.0, 2), z2=round(target.z + uz * 4.0, 2), tm=c.team)
 
     def release_attack(self, attacker, target, damage_fn, style, speed, ranged):
         if ranged:
-            p = Projectile(self.new_id(), attacker.team, attacker, attacker.x, attacker.z, style, speed)
+            ox, oz = attacker.x, attacker.z
+            data = getattr(attacker, "data", None)
+            muzzle = data["stats"].get("projectile_muzzle", 0.0) if data else 0.0
+            if muzzle:                                       # 입처럼 몸 앞쪽에서 나가는 투사체
+                d = math.hypot(target.x - ox, target.z - oz)
+                if d > 1e-6:
+                    ox, oz = ox + (target.x - ox) / d * muzzle, oz + (target.z - oz) / d * muzzle
+            p = Projectile(self.new_id(), attacker.team, attacker, ox, oz, style, speed)
             p.target = target.id
             p.on_hit = damage_fn
             self.projectiles[p.id] = p
@@ -657,6 +908,7 @@ class Simulation:
         self.time += dt
         t = self.time
         self.help_calls = [h for h in self.help_calls if h[0] > t]
+        self.run_scheduled()
 
         if t >= self.next_wave_at:
             self.spawn_wave()
@@ -666,6 +918,7 @@ class Simulation:
         for brain in self.brains.values():
             brain.update(self, dt)
 
+        self.update_displacements(dt)
         for c in self.champions.values():
             self.update_champion(c, dt)
         for m in list(self.minions.values()):
@@ -679,8 +932,64 @@ class Simulation:
             if t >= e.trigger_at:
                 del self.effects[e.id]
                 e.on_trigger(self, e)
+        self.update_zones(dt)
+        self.update_anchors()
         self.update_relics()
         self.update_vision()
+
+    def run_scheduled(self):
+        t = self.time
+        if not self.scheduled:
+            return
+        due = [s for s in self.scheduled if s[0] <= t]
+        if due:
+            self.scheduled = [s for s in self.scheduled if s[0] > t]
+            for _, fn in sorted(due, key=lambda s: s[0]):
+                fn(self)
+
+    def update_displacements(self, dt):
+        """넉백: 밀려나다가 벽·구조물에 막히면 멈추고 스턴."""
+        t = self.time
+        for u in list(self.champions.values()) + list(self.minions.values()):
+            kb = u.kb
+            if not kb:
+                continue
+            if isinstance(u, Champion) and u.dead:
+                u.kb = None
+                continue
+            step = min(kb["speed"] * dt, kb["left"])
+            tx, tz = u.x + kb["dx"] * step, u.z + kb["dz"] * step
+            rx, rz = self.resolve_position(tx, tz, u.radius)
+            blocked = math.hypot(rx - tx, rz - tz) > 0.02
+            u.x, u.z = rx, rz
+            kb["left"] -= step
+            if blocked:
+                u.kb = None
+                if kb.get("stun", 0) > 0:
+                    u.apply_stun(t, kb["stun"])
+                self.event(e="fx", fx="wallhit", x=round(u.x, 2), z=round(u.z, 2), tm=1 - u.team)
+            elif kb["left"] <= 1e-3:
+                u.kb = None
+
+    def update_zones(self, dt):
+        t = self.time
+        for z in list(self.zones.values()):
+            if z.id not in self.zones:
+                continue
+            if t >= z.until:
+                self.end_zone(z)
+            else:
+                abilities.ZONE_TICK[z.kind](self, z, dt)
+
+    def end_zone(self, z):
+        if self.zones.pop(z.id, None) is not None:
+            abilities.ZONE_END.get(z.kind, lambda sim, zone: None)(self, z)
+
+    def update_anchors(self):
+        t = self.time
+        for a in list(self.anchors.values()):
+            if t >= a.until:
+                abilities.remove_anchor(self, a, hatch=getattr(a, "cocoon", False))
 
     def update_champion(self, c, dt):
         t = self.time
@@ -695,6 +1004,9 @@ class Simulation:
                 self.event(e="respawn", d=c.id)
             return
 
+        self.update_statuses(c, dt)
+        if c.dead:
+            return
         c.gold += PASSIVE_GOLD_PER_SEC * dt
         self.give_xp(c, PASSIVE_XP_PER_SEC * dt)
         c.recompute_stats(t)
@@ -717,7 +1029,7 @@ class Simulation:
                 ox, oz = c.x, c.z
                 c.x, c.z = mapdata.spawn_points(c.team, 5)[c.id % 5]
                 c.clear_orders()
-                self.event(e="fx", fx="recall", x=round(ox, 2), z=round(oz, 2), x2=round(c.x, 2), z2=round(c.z, 2))
+                self.event(e="fx", fx="recall", x=round(ox, 2), z=round(oz, 2), x2=round(c.x, 2), z2=round(c.z, 2), tm=c.team)
 
         # 적 우물 레이저
         efx, efz = mapdata.fountain_pos(other(c.team))
@@ -727,6 +1039,9 @@ class Simulation:
                 return
 
         c.anim = 0
+        if c.rope:
+            abilities.update_rope(self, c, dt)
+            return
         if c.dash:
             self.update_dash(c, dt)
             c.anim = 1
@@ -745,8 +1060,10 @@ class Simulation:
                 c.windup = None
             elif t >= fire_at:
                 c.windup = None
-                self.release_attack(c, target, lambda sim, tg, c=c: sim.basic_attack_payload(c, tg),
-                                    "arrow", c.data["stats"].get("projectile_speed", 20), c.data["stats"].get("ranged", True))
+                pierce = t < c.pierce_until
+                self.release_attack(c, target, lambda sim, tg, c=c, pierce=pierce: sim.basic_hit(c, tg, pierce),
+                                    c.data["stats"].get("projectile_style", "arrow"),
+                                    c.data["stats"].get("projectile_speed", 20), c.data["stats"].get("ranged", True))
             else:
                 c.anim = 2
                 return
@@ -790,6 +1107,29 @@ class Simulation:
             else:
                 c.anim = 1
 
+    def update_statuses(self, c, dt):
+        """매 틱: 부쉬 시간, 표식 비례 방어력, 만료된 상태 정리, 미뤄 둔 피해."""
+        t = self.time
+        if mapdata.bush_at(c.x, c.z) >= 0:
+            c.bush_until = t + 1.0
+        c.bonus_armor = 0.0
+        if c.echo:
+            if t >= c.echo["until"]:
+                c.echo = None
+            else:
+                n = sum(1 for e in self.champions.values()
+                        if e.team != c.team and not e.dead and e.mark_of("resonance", t, c.id)
+                        and c.dist_to(e) <= 10.0)
+                c.bonus_armor = c.echo["armor_per_mark"] * n
+        if c.counter and t >= c.counter["until"]:
+            c.counter = None
+        if c.vamp and t >= c.vamp["until"]:
+            c.vamp = None
+        self.tick_ignite(c)
+        if c.dead:
+            return
+        self.tick_deferred(c, dt)
+
     def update_dash(self, c, dt):
         d = c.dash
         if d["follow"]:
@@ -803,19 +1143,37 @@ class Simulation:
             stop = 0.0
         dx, dz = d["x"] - c.x, d["z"] - c.z
         dist = math.hypot(dx, dz)
-        step = d["speed"] * dt
+        sw, ox, oz = d.get("sweep"), c.x, c.z
+        if d.get("delay", 0.0) > 0:                         # 도약 전 웅크리는 시간: 제자리에서 대상을 바라본다
+            d["delay"] -= dt
+            if dist > 1e-4:
+                c.facing = math.atan2(dz, dx)
+            return
+        if d.get("flight"):                                 # 정해진 시간 동안 날아 정확히 그때 착지한다 (대상이 움직여도)
+            left = d["flight"]
+            d["flight"] = left - dt
+            step = (dist - stop) * dt / left if left > dt else 1e9
+        else:
+            step = d["speed"] * dt
         if dist - stop <= step:
             if dist > 1e-4:
                 k = max(0.0, dist - stop) / dist
                 c.x, c.z = self.resolve_position(c.x + dx * k, c.z + dz * k, c.radius)
+            if sw:
+                abilities.sweep_hit(self, c, sw, ox, oz)
             if d.get("empower"):
-                c.empower = {"magic": d["empower"]["magic"], "until": self.time + d["empower"]["duration"]}
+                c.empower = {"dmg": d["empower"]["dmg"], "dtype": d["empower"].get("dtype", "magic"),
+                             "until": self.time + d["empower"]["duration"]}
             if d["follow"]:
                 c.attack_target = d["follow"]
             c.dash = None
+            if d.get("land"):
+                abilities.land_slam(self, c, d["land"])        # 점프 덮치기 착지
             return
         c.facing = math.atan2(dz, dx)
-        c.x, c.z = self.resolve_position(c.x + dx / dist * step, c.z + dz / dist * step, c.radius)
+        c.x, c.z = self.resolve_position(c.x + dx / dist * step, c.z + dz / dist * step, c.radius, c.ghost(self.time))
+        if sw:
+            abilities.sweep_hit(self, c, sw, ox, oz)
 
     def nearest_enemy_for_champion(self, c, radius):
         best, best_d = None, radius
@@ -880,8 +1238,66 @@ class Simulation:
         _ = t
         return best
 
+    def update_spiderling(self, m, dt):
+        """새끼 거미 (거미 여왕 E): 가까운 적 챔피언(없으면 적 미니언)을 거미 여왕과 같은 평타(거미줄 탄)로 공격한다.
+        적에게 죽지 않는 한 사라지지 않는다."""
+        t = self.time
+        b = m.baby
+        m.anim = 0
+        if m.stunned(t):
+            m.windup = None
+            return
+        if m.windup:                                        # 평타 준비 동작: 끝나면 거미줄 탄을 쏜다
+            fire_at, tid = m.windup
+            tg = self.unit(tid)
+            if not self.targetable(tg, m.team) or not self.can_see(m.team, tg):
+                m.windup = None
+            elif t >= fire_at:
+                m.windup = None
+                dmg = b["dmg"]
+                owner = m.owner
+                self.release_attack(m, tg, lambda sim, u, dmg=dmg, owner=owner: sim.deal_damage(owner, u, dmg, "physical", ability=True),
+                                    "baby_shot", b.get("proj_speed", 20.0), True)
+            else:
+                m.anim = 2
+                return
+        best, best_d = None, 11.0
+        for c in self.champions.values():
+            if self.targetable(c, m.team) and self.can_see(m.team, c):
+                d = m.dist_to(c)
+                if d < best_d:
+                    best, best_d = c, d
+        if best is None:
+            best_d = 5.0
+            for e in self.minions.values():
+                if e.team != m.team and e.mtype != "spiderling" and self.can_see(m.team, e):
+                    d = m.dist_to(e)
+                    if d < best_d:
+                        best, best_d = e, d
+        if best is None:                                    # 적이 없으면 주인 곁에 머문다
+            o = m.owner
+            if m.dist_to(o) > 2.5 and not m.rooted(t):
+                self.move_unit(m, o.x, o.z, m.move_speed * (1 - m.slow_amount(t)), dt)
+                m.anim = 1
+            return
+        reach = m.attack_range + m.radius + best.radius
+        if m.dist_to(best) <= reach:
+            self.face(m, best.x, best.z)
+            if t >= m.attack_ready_at:
+                period = 1.0 / m.attack_speed
+                m.attack_ready_at = t + period
+                m.windup = (t + period * 0.3, best.id)
+                m.anim = 2
+            return
+        self.face(m, best.x, best.z)
+        if not m.rooted(t):
+            self.move_unit(m, best.x, best.z, m.move_speed * (1 - m.slow_amount(t)), dt, stop_dist=reach * 0.9)
+            m.anim = 1
+
     def update_minion(self, m, dt):
         t = self.time
+        if m.mtype == "spiderling":
+            return self.update_spiderling(m, dt)
         m.anim = 0
         if m.stunned(t):
             m.windup = None
@@ -1001,12 +1417,16 @@ class Simulation:
         new_id = target.id if target else None
         if new_id != s.target:
             s.ramp = 0
+            if isinstance(target, Champion):
+                # 포탑이 이 챔피언을 처음 노린다 -> 본인에게 경고음
+                self.event(e="fx", fx="turret_lock", x=s.x, z=s.z, d=target.id)
         s.target = new_id
         if target is None or t < s.attack_ready_at:
             return
         s.attack_ready_at = t + TURRET_PERIOD
         if isinstance(target, Champion):
             dmg = (TURRET_CHAMP_DMG + 2.5 * min(30.0, t / 60.0)) * (1 + 0.4 * min(s.ramp, 3))
+            shot_style = "turret_shot" if s.ramp == 0 else ("turret_shot_2" if s.ramp < 3 else "turret_shot_3")
             s.ramp += 1
 
             def hit(sim, tg, s=s, dmg=dmg):
@@ -1016,7 +1436,7 @@ class Simulation:
 
             def hit(sim, tg, s=s, pct=pct):
                 sim.deal_damage(s, tg, tg.max_hp * pct, "true")
-        self.release_attack(s, target, hit, "turret_shot", 16.0, True)
+        self.release_attack(s, target, hit, shot_style if isinstance(target, Champion) else "turret_shot", 16.0, True)
 
     # ------------------------------------------------------------------ 투사체
     def update_projectiles(self, dt):
@@ -1043,21 +1463,28 @@ class Simulation:
                 p.x += p.dx * step
                 p.z += p.dz * step
                 p.remaining -= step
-                hit, hit_along = None, 1e9
-                for u in list(self.champions.values()) + list(self.minions.values()):
-                    if not self.targetable(u, p.team) or isinstance(u, Structure):
+                p.traveled += step
+                hits = []
+                for u in (list(self.champions.values()) + list(self.minions.values())
+                          + [a for a in self.anchors.values() if getattr(a, "cocoon", False)]):
+                    if u.id in p.hit_ids or not self.targetable(u, p.team) or isinstance(u, Structure):
                         continue
                     if point_segment_dist(u.x, u.z, ox, oz, p.x, p.z) <= p.width * 0.5 + u.radius:
-                        along = (u.x - ox) * p.dx + (u.z - oz) * p.dz
-                        if along < hit_along:
-                            hit, hit_along = u, along
-                if hit is not None:
-                    p.dead = True
+                        hits.append(((u.x - ox) * p.dx + (u.z - oz) * p.dz, u))
+                hits.sort(key=lambda h: h[0])
+                if hits and not p.pierce:
+                    hits = hits[:1]
+                for _, hit in hits:
+                    p.hit_ids.add(hit.id)
                     if p.on_hit:
                         p.on_hit(self, hit)
-                    self.event(e="fx", fx=p.style + "_hit", x=round(hit.x, 2), z=round(hit.z, 2))
+                    self.event(e="fx", fx=p.style + "_hit", x=round(hit.x, 2), z=round(hit.z, 2), tm=p.team)
+                if hits and not p.pierce:
+                    p.dead = True
                 elif p.remaining <= 1e-4:
                     p.dead = True
+                    if not p.hit_ids and p.on_miss:
+                        p.on_miss(self, p)
             if p.dead:
                 self.projectiles.pop(p.id, None)
 
@@ -1090,12 +1517,14 @@ class Simulation:
     def event_visible(self, team, ev):
         """이 이벤트를 team 에게 보내도 되는가 (안 보이는 곳의 정보는 숨긴다)."""
         e = ev.get("e")
-        if e in ("dmg", "gold"):
+        if e in ("dmg", "gold", "heal"):
             keys = ("s", "d") if e == "dmg" else ("d",)
             return any((ch := self.champions.get(ev.get(k))) is not None and ch.team == team for k in keys)
         if e in ("cast", "levelup"):
             u = self.champions.get(ev.get("d"))
             return u is not None and self.can_see(team, u)
+        if e == "fx" and ev.get("pv") is not None and ev["pv"] != team:
+            return False                                    # 팀 전용 이펙트 (숨긴 덫 등)
         if e == "fx" and "x" in ev:
             obs = self._observers[team]
             pts = [(ev["x"], ev["z"])] + ([(ev["x2"], ev["z2"])] if "x2" in ev else [])
@@ -1112,13 +1541,48 @@ class Simulation:
             st.append("buff")
         if c.empower:
             st.append("emp")
-        return {
+        if c.silenced(t):
+            st.append("silence")
+        if t < c.root_until:
+            st.append("root")
+        if c.airborne(t):
+            st.append("air")
+        if c.shield_total(t) > 0:
+            st.append("shield")
+        if c.ghost(t):
+            st.append("ghost")
+        if c.rope:
+            st.append("rope")
+        if t < c.undying_until:
+            st.append("undying")
+        if c.cc_immune(t):
+            st.append("immune")
+        if c.counter and t < c.counter["until"]:
+            st.append("counter")
+        if c.caged_until > t:
+            st.append("caged")
+        if c.mark_of("resonance", t):
+            st.append("marked")
+        if t < c.exhaust_until:
+            st.append("exhaust")
+        if c.ignite:
+            st.append("ignite")
+        if c.echo and t < c.echo["until"]:
+            st.append("echo")
+        if c.vamp and t < c.vamp["until"]:
+            st.append("vamp")
+        if t < c.pierce_until:
+            st.append("pierce")
+        if (c.data["abilities"]["Q"].get("type") == "hook_dash" and c.ranks["Q"] > 0
+                and c.ready_at["Q"] <= t and c.bush_until > t):
+            st.append("bushq")              # 부쉬에서 늘어난 사거리로 외줄을 걸 수 있다는 경고 표시
+        row = {
             "i": c.id, "x": round(c.x, 2), "z": round(c.z, 2), "f": round(c.facing, 2),
             "hp": round(c.hp), "mhp": round(c.max_hp), "mp": round(c.mana), "mmp": round(c.max_mana),
             "lv": c.level, "xp": round(c.xp), "xpn": xp_to_next(c.level), "g": int(c.gold), "it": c.items,
             "ab": c.ranks, "sp": c.skill_points,
             "cd": {k: round(max(0.0, v - t), 1) for k, v in c.ready_at.items()},
-            "mk": bool(c.mark), "dead": c.dead, "rt": round(max(0.0, c.respawn_at - t), 1) if c.dead else 0,
+            "mk": bool(c.mark), "spl": c.spells, "dead": c.dead, "rt": round(max(0.0, c.respawn_at - t), 1) if c.dead else 0,
             "rc": round(max(0.0, c.recall_at - t), 1) if c.recall_at is not None else 0,
             "st": st, "a": c.anim, "k": c.kills, "d": c.deaths, "as": c.assists, "cs": c.cs,
             "shop": self.can_shop(c),
@@ -1126,7 +1590,13 @@ class Simulation:
                   "mr": round(c.stats["mr"]), "aspd": round(c.stats["attack_speed"], 2),
                   "ms": round(c.stats["move_speed"] * 100), "ah": round(c.stats["ability_haste"]),
                   "cr": round(c.stats["crit"] * 100)},
+            "sb": {k: round(v, 2) for k, v in c.base_stats.items()},
+            "sh": round(c.shield_total(t)),
         }
+        if c.rope:
+            row["rp"] = [round(c.rope["x0"], 2), round(c.rope["z0"], 2), round(c.rope["x1"], 2),
+                         round(c.rope["z1"], 2)]
+        return row
 
     def snapshots(self):
         """팀별 스냅샷 {팀: 스냅샷}. 각 팀은 자기 시야에 있는 적만 받는다."""
@@ -1148,12 +1618,20 @@ class Simulation:
                      for p in self.projectiles.values() if p.team == team or self.seen_by(obs, p.x, p.z)]
             effs = [[e.id, e.style, e.team, round(e.x, 2), round(e.z, 2), e.radius, round(e.trigger_at - t, 2)]
                     for e in self.effects.values() if e.team == team or self.seen_by(obs, e.x, e.z)]
+            zones = [[z.id, z.style, z.team, round(z.x, 2), round(z.z, 2), z.radius, round(z.until - t, 2),
+                      round(z.until - z.born, 2)]
+                     for z in self.zones.values()
+                     if z.team == team or (not z.hidden and self.seen_by(obs, z.x, z.z))]
+            anchors = [[a.id, a.team, round(a.x, 2), round(a.z, 2), math.ceil(a.hp), round(a.until - t, 1),
+                        1 if getattr(a, "cocoon", False) else 0, round(getattr(a, "until", 0) - getattr(a, "born", 0), 1),
+                        int(a.max_hp)]
+                       for a in self.anchors.values()]
             # 회복 구슬은 시야 안에 있을 때만 있다고 알려준다
             relics = [[r.id, r.x, r.z, int(r.active and self.seen_by(obs, r.x, r.z))] for r in self.relics]
             out[team] = {
                 "t": "snap", "time": round(t, 2), "score": [self.score[BLUE], self.score[RED]],
                 "ch": [row for cid, row in champs.items() if self.champions[cid].team == team or cid in vis],
-                "mn": minions, "st": structs, "pj": projs, "ef": effs, "rl": relics, "sb": board,
+                "mn": minions, "st": structs, "pj": projs, "ef": effs, "zn": zones, "an": anchors, "rl": relics, "sb": board,
                 "gone": self.gone_minions,
                 "ev": [ev for ev in self.events if self.event_visible(team, ev)],
                 "wave": round(max(0.0, self.next_wave_at - t), 1),

@@ -1,0 +1,232 @@
+{
+  "id": "spider",
+  "name": "거미 여왕",
+  "title": "동굴 여왕 거미",
+  "role": "브루저 · 암살자",
+  "color": [
+    176,
+    52,
+    36
+  ],
+  "model": {
+    "rig": "spider",
+    "scale": 0.3
+  },
+  "stats": {
+    "hp": 700,
+    "hp_per_level": 110,
+    "mana": 330,
+    "mana_per_level": 36,
+    "hp_regen": 6.0,
+    "hp_regen_per_level": 0.7,
+    "mana_regen": 6.5,
+    "mana_regen_per_level": 0.65,
+    "ad": 66,
+    "ad_per_level": 4.0,
+    "armor": 35,
+    "armor_per_level": 4.4,
+    "mr": 33,
+    "mr_per_level": 1.3,
+    "attack_speed": 0.72,
+    "attack_speed_per_level": 0.028,
+    "attack_range": 3.2,
+    "move_speed": 3.65,
+    "radius": 0.65,
+    "ranged": true,
+    "projectile_style": "web_shot",
+    "projectile_speed": 20
+  },
+  "abilities": {
+    "Q": {
+      "name": "독침 뿌리기",
+      "type": "volley",
+      "style": "spine",
+      "cooldown": [
+        9,
+        8.5,
+        8,
+        7.5,
+        7
+      ],
+      "mana": [
+        55,
+        60,
+        65,
+        70,
+        75
+      ],
+      "count": 5,
+      "spread": 56,
+      "range": 7.5,
+      "width": 0.4,
+      "speed": 17.0,
+      "damage": [
+        18,
+        27,
+        36,
+        45,
+        54
+      ],
+      "ad_ratio": 0.14,
+      "damage_type": "magic",
+      "desc": "배를 치켜들고 앞쪽 부채꼴로 독침 5발을 뿌립니다. 표시된 선이 침이 날아가는 길이며, 침은 한 발씩 따로 맞기 때문에 가까이 붙은 적일수록 여러 발을 맞습니다.",
+      "aim": "cone",
+      "angle": 60
+    },
+    "W": {
+      "name": "거미줄 장판",
+      "type": "zone",
+      "style": "web",
+      "cooldown": [
+        14,
+        13.5,
+        13,
+        12.5,
+        12
+      ],
+      "mana": [
+        60,
+        63,
+        66,
+        69,
+        72
+      ],
+      "range": 6.5,
+      "radius": 2.2,
+      "duration": 4.5,
+      "slow": [
+        0.3,
+        0.35,
+        0.4,
+        0.45,
+        0.5
+      ],
+      "damage_per_sec": [
+        10,
+        16,
+        22,
+        28,
+        34
+      ],
+      "damage_per_sec_ad": 0.1,
+      "damage_type": "magic",
+      "desc": "지정한 곳에 4.5초 동안 끈끈한 거미줄 장판을 칩니다. 장판 안의 적은 이동 속도가 느려지고 독에 중독되어 초당 피해를 입습니다."
+    },
+    "E": {
+      "name": "새끼 거미 고치",
+      "type": "cocoon",
+      "style": "cocoon",
+      "aim": "ground",
+      "cooldown": [
+        16,
+        15,
+        14,
+        13,
+        12
+      ],
+      "mana": [
+        70,
+        72,
+        74,
+        76,
+        78
+      ],
+      "range": 7.0,
+      "radius": 0.8,
+      "spacing": 1.7,
+      "count": 3,
+      "hatch": 6.5,
+      "max_cocoons": 6,
+      "baby_hp": [
+        60,
+        70,
+        80,
+        90,
+        100
+      ],
+      "baby_speed": 3.3,
+      "desc": "지정한 위치에, 나와 마우스를 잇는 선과 수직으로(T자) 고치 세 개를 놓습니다. 고치는 6.5초 뒤 부화해 새끼 거미가 나오고, 새끼 거미는 적에게 죽지 않는 한 사라지지 않으며 거미 여왕보다 살짝 느리게 움직이며 가장 가까운 적을 거미 여왕과 같은 거미줄 평타로 공격합니다. 고치는 체력바가 있어서 부화 전에 평타나 스킬로 부수면 새끼가 나오지 않습니다.",
+      "cocoon_hp": [
+        70,
+        85,
+        100,
+        115,
+        130
+      ],
+      "baby_ad": [
+        6,
+        9,
+        12,
+        15,
+        18
+      ],
+      "baby_ad_ratio": 0.1
+    },
+    "R": {
+      "name": "덮쳐 내려찍기",
+      "type": "leap_slam",
+      "style": "pounce",
+      "aim": "enemy",
+      "cooldown": [
+        90,
+        75,
+        60
+      ],
+      "mana": [
+        100,
+        100,
+        100
+      ],
+      "range": 7.5,
+      "speed": 22.0,
+      "radius": 2.4,
+      "damage": [
+        150,
+        250,
+        350
+      ],
+      "ad_ratio": 0.6,
+      "damage_type": "physical",
+      "stun": [
+        1.2,
+        1.5,
+        1.8
+      ],
+      "slow": 0.4,
+      "slow_duration": 1.2,
+      "zone": {
+        "style": "web",
+        "radius": 3.5,
+        "duration": 5.0,
+        "slow": [
+          0.4,
+          0.5,
+          0.6
+        ],
+        "damage_per_sec": [
+          35,
+          55,
+          75
+        ],
+        "damage_per_sec_ad": 0.2,
+        "damage_type": "magic"
+      },
+      "desc": "지정한 적 챔피언에게 잠시 웅크렸다가 높이 뛰어올라(약 1초) 내려찍습니다. 착지 지점 반경 2.4 안의 적은 피해를 입고 느려지며 지정한 대상은 기절하고, 그보다 넓은 반경 3.5 범위에 5초 동안 독 거미줄 장판이 깔립니다. 조준 중에는 두 범위가 표시되고, 도약 중에도 착지 지점에 표시됩니다.",
+      "flight": 1.0,
+      "windup": 0.3
+    }
+  },
+  "skill_order": [
+    "R",
+    "Q",
+    "E",
+    "W"
+  ],
+  "bot_build": [
+    "swift_boots",
+    "blood_fang",
+    "ice_reaper",
+    "guardian_mail",
+    "frost_edge"
+  ]
+}

@@ -36,6 +36,8 @@ uniform vec4 u_tint;
 uniform vec3 u_emissive;
 uniform float u_unlit;
 uniform bool u_use_tex;
+uniform bool u_soft;         // 이펙트 그림: 반투명 가장자리를 버리지 않고 그대로 섞는다
+uniform bool u_dbl;          // 양면 재질: 뒷면은 법선을 뒤집어 밝게 (보스 모델)
 uniform sampler2D u_tex;
 uniform vec3 u_cam;
 uniform vec3 u_fog_color;
@@ -55,15 +57,19 @@ void main() {
         vec4 tx = texture(u_tex, v_uv);
         base *= tx.rgb;
         a = tx.a;
-        if (a < 0.35) discard;
+        if (a < 0.35 && !u_soft) discard;
     }
     base *= u_tint.rgb;
     vec3 n = normalize(v_nrm);
+    if (u_dbl && !gl_FrontFacing) n = -n;
     float diff = max(dot(n, -u_light), 0.0);
     float hemi = 0.5 + 0.5 * n.y;
     vec3 view = normalize(u_cam - v_wpos);
     float rim = pow(1.0 - max(dot(n, view), 0.0), 3.0) * 0.25;
-    vec3 lit = base * (0.32 + 0.28 * hemi + 0.62 * diff) + vec3(0.55, 0.7, 0.9) * rim;
+    // 황혼빛: 그림자는 보랏빛, 햇빛은 따뜻한 주황
+    vec3 amb = vec3(0.29, 0.28, 0.33) + vec3(0.27, 0.26, 0.26) * hemi;
+    vec3 sun = vec3(0.66, 0.58, 0.47) * diff;
+    vec3 lit = base * (amb + sun) + vec3(1.0, 0.72, 0.5) * rim;
     vec3 c = mix(lit, base, u_unlit) + u_emissive;
     float dist = length(u_cam - v_wpos);
     float fog = clamp((dist - 45.0) / 70.0, 0.0, 1.0) * u_fog;
@@ -72,12 +78,45 @@ void main() {
         vec2 vuv = (v_wpos.xz - u_vis_rect.xy) / u_vis_rect.zw;
         if (vuv.x >= 0.0 && vuv.x <= 1.0 && vuv.y >= 0.0 && vuv.y <= 1.0) {
             float v = texture(u_vis, vuv).r;
-            c = mix(c * vec3(0.32, 0.34, 0.42), c, v);
+            v = v * v * (3.0 - 2.0 * v);                  // 가장자리를 더 부드럽게
+            c = mix(c * vec3(0.30, 0.32, 0.42), c, v);
         }
     }
     f_color = vec4(c, a * u_tint.a);
 }
 """
+
+MAX_BONES = 32      # tools/bake_skin.py 의 MAX_JOINTS 와 같아야 한다
+
+# 뼈대 애니메이션용 정점 셰이더: 정점마다 뼈 4개의 행렬을 가중치로 섞어 움직인다.
+# 뼈 행렬에는 "키 맞추기 + 발밑 정렬" 변환이 이미 곱해져 있다 (tools/bake_skin.py).
+MESH_SKIN_VS = """
+#version 330
+uniform mat4 u_vp;
+uniform mat4 u_model;
+uniform mat4 bones[%d];
+in vec3 in_pos;
+in vec3 in_nrm;
+in vec3 in_col;
+in vec2 in_uv;
+in vec4 in_joints;
+in vec4 in_weights;
+out vec3 v_nrm;
+out vec3 v_col;
+out vec2 v_uv;
+out vec3 v_wpos;
+void main() {
+    ivec4 j = ivec4(in_joints + 0.5);
+    mat4 sk = bones[j.x] * in_weights.x + bones[j.y] * in_weights.y
+            + bones[j.z] * in_weights.z + bones[j.w] * in_weights.w;
+    vec4 w = u_model * (sk * vec4(in_pos, 1.0));
+    v_wpos = w.xyz;
+    v_nrm = mat3(u_model) * (mat3(sk) * in_nrm);
+    v_col = in_col;
+    v_uv = in_uv;
+    gl_Position = u_vp * w;
+}
+""" % MAX_BONES
 
 OVERLAY_VS = """
 #version 330
@@ -184,6 +223,30 @@ class Mesh:
             vbo.release()
 
 
+class SkinnedMesh:
+    """뼈대 애니메이션 메시. parts: [(정점 배열 (N,11), 뼈 정보 (N,8: 뼈번호 4 + 가중치 4), 텍스처 또는 None)]."""
+
+    skinned = True
+
+    def __init__(self, renderer, parts, bounds=None):
+        self.parts = []   # (vao, vbo, texture or None) — Mesh 와 같은 모양이라 Renderer.draw 의 반복문을 공유한다
+        ctx = renderer.ctx
+        for arr, jw, tex in parts:
+            if len(arr) == 0:
+                continue
+            data = np.ascontiguousarray(np.concatenate([arr, jw], axis=1), dtype="f4")
+            vbo = ctx.buffer(data.tobytes())
+            vao = ctx.vertex_array(renderer.prog_skin, [(vbo, "3f 3f 3f 2f 4f 4f", "in_pos", "in_nrm", "in_col", "in_uv",
+                                                         "in_joints", "in_weights")])
+            self.parts.append((vao, vbo, tex))
+        self.bounds = bounds
+
+    def release(self):
+        for vao, vbo, tex in self.parts:
+            vao.release()
+            vbo.release()
+
+
 def bounds_of(arr):
     if len(arr) == 0:
         return (np.zeros(3), np.zeros(3))
@@ -245,9 +308,16 @@ class Renderer:
         self.width = width
         self.height = height
         self.prog = ctx.program(vertex_shader=MESH_VS, fragment_shader=MESH_FS)
-        self.prog["u_light"].value = tuple(np.array([-0.35, -1.0, -0.45]) / np.linalg.norm([-0.35, -1.0, -0.45]))
-        self.prog["u_fog_color"].value = (0.02, 0.02, 0.05)
-        self.prog["u_fog"].value = 0.0          # 우주 배경: 안개 없음
+        self.prog_skin = ctx.program(vertex_shader=MESH_SKIN_VS, fragment_shader=MESH_FS)   # 뼈대 애니메이션 모델
+        light = tuple(np.array([-0.35, -1.0, -0.45]) / np.linalg.norm([-0.35, -1.0, -0.45]))
+        for prog in (self.prog, self.prog_skin):
+            prog["u_light"].value = light
+            prog["u_fog_color"].value = (0.70, 0.84, 1.0)
+            prog["u_fog"].value = 0.0           # 우주 배경: 안개 없음
+            prog["u_tex"].value = 0
+            prog["u_soft"].value = False
+            prog["u_dbl"].value = False
+        self._ident_bones = np.tile(np.eye(4, dtype="f4").T.reshape(-1), MAX_BONES).tobytes()
         self.camera = Camera(width, height)
         self._white = ctx.texture((1, 1), 4, b"\xff\xff\xff\xff")
         self.overlay = Overlay(ctx, width, height)
@@ -291,42 +361,58 @@ class Renderer:
         self.ctx.enable(moderngl.DEPTH_TEST | moderngl.BLEND)
         self.ctx.disable(moderngl.CULL_FACE)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
-        self.ctx.depth_mask = True
-        self.prog["u_vp"].write(gl_bytes(cam.vp))
-        if self.vision:
-            tex, rect = self.vision
-            tex.use(1)
-            self.prog["u_vis"].value = 1
-            self.prog["u_vis_rect"].value = rect
-            self.prog["u_use_vis"].value = True
-        else:
-            self.prog["u_use_vis"].value = False
-        self.prog["u_cam"].value = tuple(float(v) for v in cam.eye())
+        self.ctx.fbo.depth_mask = True
+        vp = gl_bytes(cam.vp)
+        eye = tuple(float(v) for v in cam.eye())
+        for prog in (self.prog, self.prog_skin):
+            prog["u_vp"].write(vp)
+            if self.vision:
+                tex, rect = self.vision
+                tex.use(1)
+                prog["u_vis"].value = 1
+                prog["u_vis_rect"].value = rect
+                prog["u_use_vis"].value = True
+            else:
+                prog["u_use_vis"].value = False
+            prog["u_cam"].value = eye
 
-    def draw(self, mesh, model, tint=(1, 1, 1, 1), emissive=(0, 0, 0), unlit=0.0):
+    y_offset = 0.0
+
+    def draw(self, mesh, model, tint=(1, 1, 1, 1), emissive=(0, 0, 0), unlit=0.0, bones=None, soft=False):
+        """bones: 뼈대 모델(SkinnedMesh)일 때 뼈 행렬 묶음 (game/client/skin.py 의 Animator.bones())."""
         if mesh is None:
             return
-        self.prog["u_model"].write(gl_bytes(model))
-        self.prog["u_tint"].value = tuple(tint) if len(tint) == 4 else (*tint, 1.0)
-        self.prog["u_emissive"].value = tuple(emissive)
-        self.prog["u_unlit"].value = float(unlit)
+        prog = self.prog
+        if getattr(mesh, "skinned", False):
+            prog = self.prog_skin
+            prog["bones"].write(bones if bones is not None else self._ident_bones)
+        if self.y_offset:
+            model = model.copy()
+            model[1, 3] += self.y_offset            # 리그 챔피언 에어본 등: 그리는 전체를 위로 띄운다
+        prog["u_model"].write(gl_bytes(model))
+        prog["u_tint"].value = tuple(tint) if len(tint) == 4 else (*tint, 1.0)
+        prog["u_emissive"].value = tuple(emissive)
+        prog["u_unlit"].value = float(unlit)
+        prog["u_soft"].value = bool(soft)
         for vao, vbo, tex in mesh.parts:
             if tex is not None:
                 tex.use(0)
-                self.prog["u_use_tex"].value = True
-                self.prog["u_tex"].value = 0
+                prog["u_use_tex"].value = True
             else:
-                self.prog["u_use_tex"].value = False
+                prog["u_use_tex"].value = False
             vao.render(moderngl.TRIANGLES)
 
-    def draw_transparent(self, mesh, model, tint, emissive=(0, 0, 0), unlit=1.0, additive=False):
-        """지면 장식/이펙트용: 깊이 쓰기 없이 블렌딩."""
-        self.ctx.depth_mask = False
+    def draw_transparent(self, mesh, model, tint, emissive=(0, 0, 0), unlit=1.0, additive=False, bones=None):
+        """지면 장식/이펙트용: 깊이 쓰기 없이 블렌딩.
+        (깊이 쓰기는 Context 가 아니라 Framebuffer 의 depth_mask 로 끈다. 예전에는 ctx.depth_mask 라고 써서
+        아무 효과가 없었고, 투명한 먼지 그림의 네모 전체가 깊이를 써서 뒤에 그리는 이펙트를 네모로 잘라 먹었다.)"""
+        fbo = self.ctx.fbo
+        fbo.depth_mask = False
         if additive:
             self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE
-        self.draw(mesh, model, tint, emissive, unlit)
+        self.draw(mesh, model, tint, emissive, unlit, bones, soft=True)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
-        self.ctx.depth_mask = True
+        fbo.depth_mask = True
 
     def make_texture(self, surface_or_bytes, size=None, pixelated=False):
         if isinstance(surface_or_bytes, pygame.Surface):
@@ -393,102 +479,58 @@ float fbm(vec3 p) {
     return v;
 }
 
-// 방향 d 의 별 한 층. scale 이 클수록 촘촘하고 작은 별
-vec3 stars(vec3 d, float scale, float density, float size) {
-    vec3 p = d * scale;
-    vec3 cell = floor(p);
-    vec3 f = fract(p);
-    float h = hash(cell);
-    if (h > density) return vec3(0.0);
-    vec3 sp = vec3(hash(cell + 11.1), hash(cell + 23.7), hash(cell + 37.3)) * 0.6 + 0.2;
-    float dist = length(f - sp);
-    float s = size * (0.6 + 0.8 * hash(cell + 5.3));
-    float b = smoothstep(s, 0.0, dist);
-    vec3 col = mix(vec3(0.65, 0.78, 1.0), vec3(1.0, 0.86, 0.7), hash(cell + 3.1));
-    float tw = 0.75 + 0.25 * sin(u_time * (1.5 + 3.0 * h) + h * 60.0);
-    return col * b * tw;
-}
-
-// 구 행성. 맞으면 (색, 알파) 반환
-vec4 planet(vec3 d, vec3 pd, float ang_r, vec3 c1, vec3 c2, float bands, vec3 light, out float t_hit) {
-    t_hit = 1e9;
-    float R = sin(ang_r);
-    vec3 C = pd;
-    float b = dot(d, C);
-    float disc = R * R - (dot(C, C) - b * b);
-    // 대기 빛 번짐
-    float edge = acos(clamp(dot(d, pd), -1.0, 1.0)) - ang_r;
-    vec3 glow = c2 * 0.6 * exp(-max(edge, 0.0) * 40.0);
-    if (disc < 0.0) return vec4(glow, 0.0);
-    float t = b - sqrt(disc);
-    t_hit = t;
-    vec3 N = normalize(d * t - C);
-    float n = fbm(N * 3.0);
-    float stripe = 0.5 + 0.5 * sin(N.y * bands + n * 6.0);
-    vec3 base = mix(c1, c2, stripe * 0.8 + n * 0.3);
-    float lit = clamp(dot(N, light), 0.0, 1.0);
-    float rim = pow(1.0 - clamp(dot(N, -d), 0.0, 1.0), 2.5);
-    vec3 col = base * (0.06 + 1.05 * lit) + c2 * rim * 0.6 * (0.3 + lit);
-    return vec4(col, 1.0);
-}
-
+// 황혼의 하늘: 아래는 노을빛 구름 바다, 위는 보랏빛에서 남색으로 번지는 하늘, 지평선 근처에 큰 해
 void main() {
     vec4 pn = u_inv_vp * vec4(v_ndc, -1.0, 1.0);
     vec4 pf = u_inv_vp * vec4(v_ndc, 1.0, 1.0);
-    vec3 d = normalize(pf.xyz / pf.w - pn.xyz / pn.w);
+    vec3 ro = pn.xyz / pn.w;
+    vec3 d = normalize(pf.xyz / pf.w - ro);
 
-    // 바탕 + 성운
-    vec3 col = vec3(0.008, 0.01, 0.025);
-    float n1 = fbm(d * 2.2 + vec3(4.0, 1.0, 7.0));
-    float n2 = fbm(d * 3.7 + vec3(9.0, 3.0, 1.0));
-    float n3 = fbm(d * 6.0 - vec3(2.0, 5.0, 3.0));
-    float neb = pow(clamp(n1 * 1.25 - 0.25, 0.0, 1.0), 2.6);
-    vec3 nebc = mix(vec3(0.45, 0.12, 0.6), vec3(0.08, 0.35, 0.75), n2);
-    nebc = mix(nebc, vec3(0.85, 0.3, 0.45), smoothstep(0.55, 0.75, n3) * 0.6);
-    col += nebc * neb * 1.1;
-    col += vec3(0.1, 0.2, 0.45) * pow(n2, 4.0) * 0.5;
+    vec3 sun_dir = normalize(vec3(-0.45, 0.16, -0.88));
+    vec3 sun_col = vec3(1.0, 0.95, 0.8);
+    float sd = max(dot(d, sun_dir), 0.0);
 
-    // 별 (세 겹)
-    col += stars(d, 90.0, 0.06, 0.32) * 1.6;
-    col += stars(d, 170.0, 0.10, 0.30);
-    col += stars(d, 320.0, 0.18, 0.35) * 0.55 * (0.4 + neb * 2.0);
+    // 하늘
+    float h = clamp(d.y, -1.0, 1.0);
+    vec3 horizon = vec3(0.80, 0.91, 1.0);
+    vec3 mid = vec3(0.46, 0.70, 0.96);
+    vec3 zenith = vec3(0.14, 0.40, 0.86);
+    vec3 sky = mix(horizon, mid, smoothstep(0.0, 0.25, h));
+    sky = mix(sky, zenith, smoothstep(0.2, 0.9, h));
+    sky += sun_col * (pow(sd, 6.0) * 0.18 + pow(sd, 90.0) * 0.9);
+    sky = mix(sky, vec3(1.0, 0.95, 0.8), smoothstep(0.9993, 0.9997, sd));
 
-    // 행성 (고리 행성 + 작은 위성)
-    vec3 light = normalize(vec3(-0.7, 0.45, 0.4));
-    vec3 pd = normalize(vec3(0.42, -0.62, -0.66));
-    float t1;
-    vec4 p1 = planet(d, pd, 0.13, vec3(0.75, 0.42, 0.25), vec3(0.95, 0.75, 0.5), 22.0, light, t1);
-    // 고리
-    vec3 rn = normalize(vec3(0.5, 0.75, 0.9));
-    float denom = dot(d, rn);
-    vec4 ring = vec4(0.0);
-    float t2 = 1e9;
-    if (abs(denom) > 1e-4) {
-        t2 = dot(pd, rn) / denom;
-        if (t2 > 0.0) {
-            float r = length(d * t2 - pd) / sin(0.13);
-            if (r > 1.3 && r < 2.0) {
-                float band = 0.6 + 0.4 * sin(r * 30.0) * sin(r * 9.0 + 1.3);
-                float a = smoothstep(1.3, 1.38, r) * smoothstep(2.0, 1.9, r) * band * 0.8;
-                ring = vec4(vec3(0.9, 0.8, 0.65) * (0.35 + 0.65 * band), a);
-            }
-        }
+    vec3 col = sky;
+    // 아래쪽: 플랫폼 아래로 펼쳐진 구름 바다 (월드에 고정돼서 카메라가 움직이면 시차가 생긴다)
+    if (d.y < -0.01) {
+        float plane_y = -46.0;
+        float t = (plane_y - ro.y) / d.y;
+        vec2 wp = ro.xz + d.xz * t;
+        float n1 = fbm(vec3(wp * 0.035, u_time * 0.015));
+        float n2 = fbm(vec3(wp * 0.11 + 7.0, 1.0 + u_time * 0.02));
+        float cl = smoothstep(0.32, 0.72, n1 * 0.75 + n2 * 0.35);
+        vec3 deep = vec3(0.38, 0.55, 0.80);                       // 구름 틈의 깊은 안개
+        vec3 lit = vec3(1.0, 1.0, 1.0);                         // 해를 받은 구름 윗면
+        vec3 shade = vec3(0.70, 0.80, 0.94);
+        float rim = clamp((n1 - fbm(vec3((wp + sun_dir.xz * 4.0) * 0.035, u_time * 0.015))) * 6.0 + 0.5, 0.0, 1.0);
+        vec3 cloud = mix(shade, lit, rim);
+        vec3 below = mix(deep, cloud, cl);
+        float far = smoothstep(0.0, 0.35, -d.y);                 // 지평선에 가까울수록 노을 안개에 묻힌다
+        below = mix(horizon * 0.95, below, far);
+        col = below;
     }
-    if (p1.a > 0.0) col = p1.rgb; else col += p1.rgb;
-    if (ring.a > 0.0 && (t2 < t1 || p1.a == 0.0)) col = mix(col, ring.rgb, ring.a);
-
-    float t3;
-    vec4 p2 = planet(d, normalize(vec3(-0.55, -0.42, -0.72)), 0.055, vec3(0.35, 0.38, 0.45),
-                     vec3(0.55, 0.7, 0.9), 6.0, light, t3);
-    if (p2.a > 0.0) col = p2.rgb; else col += p2.rgb;
-
+    // 먼 하늘의 얇은 구름 띠
+    if (d.y > 0.0) {
+        float c = fbm(vec3(d.x * 3.0 / (d.y + 0.35), d.z * 3.0 / (d.y + 0.35), u_time * 0.01));
+        col = mix(col, mix(vec3(0.95, 0.98, 1.0), horizon, 0.4), smoothstep(0.52, 0.8, c) * 0.35 * (1.0 - h));
+    }
     f_color = vec4(col, 1.0);
 }
 """
 
 
 class SpaceSky:
-    """화면 전체에 별·성운·행성을 셰이더로 그린다 (텍스처 불필요)."""
+    """화면 전체에 황혼 하늘과 구름 바다를 셰이더로 그린다 (텍스처 불필요)."""
 
     def __init__(self, ctx):
         self.ctx = ctx

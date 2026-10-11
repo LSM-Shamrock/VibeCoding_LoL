@@ -1,4 +1,4 @@
-"""방: 팀 배치, 봇 추가/제거, 방장의 게임 시작. (방은 항상 5v5, 각 팀 1명 이상이면 시작)"""
+"""방: 팀 배치, 봇 추가/제거, 방장의 게임 시작. (방은 항상 3v3, 각 팀 1명 이상이면 시작)"""
 import pygame
 
 from ...shared.constants import BLUE, RED, TEAM_NAMES
@@ -48,15 +48,15 @@ class RoomScene(Scene):
                                               lambda k=m["key"]: self.app.send({"t": "remove_bot", "key": k}),
                                               color=(110, 50, 60), size=15))
                 else:
-                    if host:
-                        btns.append(ui.Button((x + COL_W - 110, y + 14, 96, 30), "+ 봇 추가",
-                                              lambda t=team: self.app.send({"t": "add_bot", "team": t}),
-                                              color=(50, 90, 130), size=15))
                     me = next((m for m in room["members"] if m["key"] == self.app.my_key), None)
                     if me and me["team"] != team:
                         btns.append(ui.Button((x + 14, y + 14, 110, 30), "이 팀으로",
                                               lambda t=team: self.app.send({"t": "switch_team", "team": t}),
                                               color=(60, 70, 100), size=15))
+                    if host:                               # 봇 추가: 빈 자리마다, 봇 '제거' 버튼과 같은 자리에
+                        btns.append(ui.Button((x + COL_W - 90, y + 14, 76, 30), "봇 추가",
+                                              lambda t=team: self.app.send({"t": "add_bot", "team": t}),
+                                              color=(50, 90, 130), size=15))
         return btns
 
     def handle_event(self, e):
@@ -117,7 +117,14 @@ class RoomScene(Scene):
                     ui.panel(surf, rect, (16, 22, 36, 180), ui.BORDER)
                     ui.text(surf, "빈 자리", (x + COL_W // 2, y + SLOT_H // 2), 16, ui.TEXT_DIM, anchor="center")
         for b in self.slot_buttons:
-            b.draw(surf)
+            if getattr(b, "ghost", False) and not b.enabled:
+                s = pygame.Surface(b.rect.size, pygame.SRCALPHA)
+                pygame.draw.rect(s, (90, 96, 108, 90), s.get_rect(), border_radius=6)
+                pygame.draw.rect(s, (0, 0, 0, 90), s.get_rect(), 1, border_radius=6)
+                surf.blit(s, b.rect)
+                ui.text(surf, b.label, b.rect.center, b.size, (170, 176, 188), anchor="center", shadow=False)
+            else:
+                b.draw(surf)
 
         if self.is_host():
             self.btn_start.draw(surf)

@@ -1,0 +1,1180 @@
+{
+ "_설명": "효과음 설정. sounds: 소리 이름 → 파일(여러 개면 무작위) · vol 음량 · pitch 음높이 흔들림 · gap 같은 소리 최소 간격(초) · range 들리는 거리 · pri 1 이면 다른 소리에 밀려 안 나오는 일이 없음. 나머지 항목(attack, cast, fx, projectile)은 게임 상황 → 소리 이름 연결입니다. README 의 '효과음' 참고.",
+ "default_range": 30.0,
+ "sounds": {
+  "ui_click": {
+   "files": [
+    "interface/click_002.ogg"
+   ],
+   "vol": 0.55,
+   "pitch": 0.04
+  },
+  "ui_hover": {
+   "files": [
+    "interface/tick_001.ogg"
+   ],
+   "vol": 0.18,
+   "pitch": 0.03,
+   "gap": 0.06
+  },
+  "ui_confirm": {
+   "files": [
+    "interface/confirmation_001.ogg"
+   ],
+   "vol": 0.6
+  },
+  "ui_back": {
+   "files": [
+    "interface/back_001.ogg"
+   ],
+   "vol": 0.5
+  },
+  "ui_open": {
+   "files": [
+    "interface/open_001.ogg"
+   ],
+   "vol": 0.5
+  },
+  "ui_close": {
+   "files": [
+    "interface/close_001.ogg"
+   ],
+   "vol": 0.5
+  },
+  "ui_error": {
+   "files": [
+    "interface/error_004.ogg"
+   ],
+   "vol": 0.5,
+   "gap": 0.2
+  },
+  "ui_select": {
+   "files": [
+    "interface/select_003.ogg"
+   ],
+   "vol": 0.55,
+   "pitch": 0.03
+  },
+  "ui_lock": {
+   "files": [
+    "interface/confirmation_004.ogg"
+   ],
+   "vol": 0.7
+  },
+  "ui_toggle": {
+   "files": [
+    "interface/toggle_002.ogg"
+   ],
+   "vol": 0.5
+  },
+  "ui_tick": {
+   "files": [
+    "interface/tick_004.ogg"
+   ],
+   "vol": 0.5,
+   "gap": 0.3
+  },
+  "ui_chat": {
+   "files": [
+    "interface/pluck_001.ogg"
+   ],
+   "vol": 0.4,
+   "gap": 0.1
+  },
+  "ui_notify": {
+   "files": [
+    "interface/bong_001.ogg"
+   ],
+   "vol": 0.45,
+   "gap": 0.3
+  },
+  "ui_buy": {
+   "files": [
+    "rpg/handleCoins.ogg"
+   ],
+   "vol": 0.6,
+   "pitch": 0.03,
+   "gap": 0.1
+  },
+  "ui_sell": {
+   "files": [
+    "rpg/handleCoins2.ogg"
+   ],
+   "vol": 0.6,
+   "pitch": 0.03,
+   "gap": 0.1
+  },
+  "cast_fail": {
+   "files": [
+    "interface/error_006.ogg"
+   ],
+   "vol": 0.45,
+   "gap": 0.3
+  },
+  "levelup": {
+   "files": [
+    "digital/powerUp7.ogg"
+   ],
+   "vol": 0.7,
+   "gap": 0.5
+  },
+  "skill_up": {
+   "files": [
+    "digital/pepSound3.ogg"
+   ],
+   "vol": 0.5,
+   "pitch": 0.03,
+   "gap": 0.15
+  },
+  "respawn": {
+   "files": [
+    "digital/phaseJump3.ogg"
+   ],
+   "vol": 0.55,
+   "gap": 0.5,
+   "range": 34
+  },
+  "death": {
+   "files": [
+    "digital/lowDown.ogg"
+   ],
+   "vol": 0.65,
+   "gap": 0.5,
+   "range": 34
+  },
+  "recall_start": {
+   "files": [
+    "scifi/forceField_001.ogg"
+   ],
+   "vol": 0.5,
+   "gap": 0.5,
+   "range": 30
+  },
+  "recall_done": {
+   "files": [
+    "digital/phaseJump5.ogg"
+   ],
+   "vol": 0.6,
+   "gap": 0.2,
+   "range": 36
+  },
+  "gold": {
+   "files": [
+    "rpg/handleCoins.ogg",
+    "rpg/handleCoins2.ogg"
+   ],
+   "vol": 0.28,
+   "pitch": 0.05,
+   "gap": 0.12
+  },
+  "heal": {
+   "files": [
+    "digital/pepSound1.ogg"
+   ],
+   "vol": 0.3,
+   "pitch": 0.05,
+   "gap": 0.4
+  },
+  "hurt": {
+   "files": [
+    "impact/impactSoft_medium_000.ogg",
+    "impact/impactSoft_medium_001.ogg",
+    "impact/impactSoft_medium_002.ogg"
+   ],
+   "vol": 0.35,
+   "pitch": 0.05,
+   "gap": 0.2
+  },
+  "relic": {
+   "files": [
+    "interface/glass_002.ogg"
+   ],
+   "vol": 0.25,
+   "gap": 0.3,
+   "range": 36
+  },
+  "kill_self": {
+   "files": [
+    "digital/powerUp2.ogg"
+   ],
+   "vol": 0.6,
+   "gap": 0.3
+  },
+  "footstep": {
+   "files": [
+    "impact/footstep_concrete_000.ogg",
+    "impact/footstep_concrete_001.ogg",
+    "impact/footstep_concrete_002.ogg",
+    "impact/footstep_concrete_003.ogg",
+    "impact/footstep_concrete_004.ogg"
+   ],
+   "vol": 0.11,
+   "pitch": 0.08,
+   "gap": 0.1
+  },
+  "vo_start": {
+   "files": [
+    "voice/fight.ogg"
+   ],
+   "vol": 0.85,
+   "gap": 1.0,
+   "pri": 1
+  },
+  "vo_firstblood": {
+   "files": [
+    "voice/combo.ogg"
+   ],
+   "vol": 0.85,
+   "gap": 1.0,
+   "pri": 1
+  },
+  "vo_multikill": {
+   "files": [
+    "voice/multi_kill.ogg"
+   ],
+   "vol": 0.85,
+   "gap": 1.0,
+   "pri": 1
+  },
+  "vo_win": {
+   "files": [
+    "voice/you_win.ogg"
+   ],
+   "vol": 0.9,
+   "gap": 1.0,
+   "pri": 1
+  },
+  "vo_lose": {
+   "files": [
+    "voice/you_lose.ogg"
+   ],
+   "vol": 0.9,
+   "gap": 1.0,
+   "pri": 1
+  },
+  "vo_select": {
+   "files": [
+    "voice/choose_your_character.ogg"
+   ],
+   "vol": 0.85,
+   "gap": 1.0,
+   "pri": 1
+  },
+  "inhib_respawn": {
+   "files": [
+    "digital/threeTone1.ogg"
+   ],
+   "vol": 0.5,
+   "gap": 0.5
+  },
+  "struct_destroy": {
+   "files": [
+    "scifi/explosionCrunch_000.ogg",
+    "scifi/explosionCrunch_001.ogg",
+    "scifi/explosionCrunch_002.ogg"
+   ],
+   "vol": 0.85,
+   "pitch": 0.04,
+   "gap": 0.3,
+   "range": 48
+  },
+  "struct_destroy_big": {
+   "files": [
+    "scifi/lowFrequency_explosion_000.ogg",
+    "scifi/lowFrequency_explosion_001.ogg"
+   ],
+   "vol": 1.0,
+   "gap": 0.5,
+   "range": 60
+  },
+  "struct_plate": {
+   "files": [
+    "impact/impactPlate_heavy_001.ogg",
+    "impact/impactPlate_heavy_002.ogg",
+    "impact/impactPlate_heavy_003.ogg"
+   ],
+   "vol": 0.6,
+   "pitch": 0.04,
+   "gap": 0.2,
+   "range": 40
+  },
+  "minion_die": {
+   "files": [
+    "impact/impactSoft_medium_003.ogg",
+    "impact/impactSoft_medium_004.ogg"
+   ],
+   "vol": 0.22,
+   "pitch": 0.08,
+   "gap": 0.08,
+   "range": 22
+  },
+  "minion_swing": {
+   "files": [
+    "rpg/cloth1.ogg",
+    "rpg/cloth2.ogg"
+   ],
+   "vol": 0.2,
+   "pitch": 0.08,
+   "gap": 0.1,
+   "range": 18
+  },
+  "minion_bolt": {
+   "files": [
+    "scifi/laserSmall_002.ogg",
+    "scifi/laserSmall_003.ogg"
+   ],
+   "vol": 0.056,
+   "pitch": 0.06,
+   "gap": 0.08,
+   "range": 22
+  },
+  "cannon_shot": {
+   "files": [
+    "scifi/laserLarge_001.ogg"
+   ],
+   "vol": 0.12,
+   "pitch": 0.05,
+   "gap": 0.15,
+   "range": 28
+  },
+  "turret_shot": {
+   "files": [
+    "scifi/laserRetro_001.ogg",
+    "scifi/laserRetro_002.ogg",
+    "scifi/laserRetro_003.ogg"
+   ],
+   "vol": 0.2,
+   "pitch": 0.05,
+   "gap": 0.1,
+   "range": 34
+  },
+  "atk_sword": {
+   "files": [
+    "rpg/knifeSlice.ogg",
+    "rpg/knifeSlice2.ogg"
+   ],
+   "vol": 0.5,
+   "pitch": 0.05,
+   "gap": 0.1,
+   "range": 26
+  },
+  "atk_scythe": {
+   "files": [
+    "rpg/drawKnife1.ogg",
+    "rpg/drawKnife2.ogg",
+    "rpg/drawKnife3.ogg"
+   ],
+   "vol": 0.5,
+   "pitch": 0.05,
+   "gap": 0.1,
+   "range": 26
+  },
+  "atk_fist": {
+   "files": [
+    "rpg/cloth3.ogg",
+    "rpg/cloth4.ogg"
+   ],
+   "vol": 0.55,
+   "pitch": 0.08,
+   "gap": 0.08,
+   "range": 24
+  },
+  "atk_dagger": {
+   "files": [
+    "rpg/knifeSlice2.ogg",
+    "rpg/drawKnife1.ogg"
+   ],
+   "vol": 0.45,
+   "pitch": 0.07,
+   "gap": 0.08,
+   "range": 26
+  },
+  "atk_bow": {
+   "files": [
+    "interface/pluck_002.ogg",
+    "interface/pluck_001.ogg"
+   ],
+   "vol": 0.5,
+   "pitch": 0.06,
+   "gap": 0.1,
+   "range": 28
+  },
+  "atk_holy": {
+   "files": [
+    "scifi/laserSmall_000.ogg",
+    "scifi/laserSmall_001.ogg"
+   ],
+   "vol": 0.4,
+   "pitch": 0.05,
+   "gap": 0.1,
+   "range": 28
+  },
+  "atk_nature": {
+   "files": [
+    "scifi/slime_000.ogg"
+   ],
+   "vol": 0.45,
+   "pitch": 0.1,
+   "gap": 0.1,
+   "range": 28
+  },
+  "atk_generic": {
+   "files": [
+    "rpg/knifeSlice.ogg"
+   ],
+   "vol": 0.45,
+   "pitch": 0.05,
+   "gap": 0.1,
+   "range": 26
+  },
+  "hit_metal": {
+   "files": [
+    "impact/impactMetal_medium_000.ogg",
+    "impact/impactMetal_medium_001.ogg",
+    "impact/impactMetal_medium_002.ogg"
+   ],
+   "vol": 0.5,
+   "pitch": 0.05,
+   "gap": 0.05,
+   "range": 28
+  },
+  "hit_plate": {
+   "files": [
+    "impact/impactPlate_light_000.ogg",
+    "impact/impactPlate_light_001.ogg",
+    "impact/impactPlate_light_002.ogg"
+   ],
+   "vol": 0.5,
+   "pitch": 0.05,
+   "gap": 0.05,
+   "range": 28
+  },
+  "hit_punch": {
+   "files": [
+    "impact/impactPunch_medium_000.ogg",
+    "impact/impactPunch_medium_001.ogg",
+    "impact/impactPunch_medium_002.ogg"
+   ],
+   "vol": 0.6,
+   "pitch": 0.05,
+   "gap": 0.05,
+   "range": 28
+  },
+  "hit_blade": {
+   "files": [
+    "impact/impactMetal_light_000.ogg",
+    "impact/impactMetal_light_001.ogg",
+    "impact/impactMetal_light_002.ogg"
+   ],
+   "vol": 0.5,
+   "pitch": 0.06,
+   "gap": 0.05,
+   "range": 28
+  },
+  "hit_wood": {
+   "files": [
+    "impact/impactWood_light_000.ogg",
+    "impact/impactWood_light_001.ogg",
+    "impact/impactWood_light_002.ogg"
+   ],
+   "vol": 0.5,
+   "pitch": 0.05,
+   "gap": 0.05,
+   "range": 28
+  },
+  "hit_glass": {
+   "files": [
+    "impact/impactGlass_light_000.ogg",
+    "impact/impactGlass_light_001.ogg",
+    "impact/impactGlass_light_002.ogg"
+   ],
+   "vol": 0.45,
+   "pitch": 0.05,
+   "gap": 0.05,
+   "range": 28
+  },
+  "hit_soft": {
+   "files": [
+    "impact/impactSoft_medium_000.ogg",
+    "impact/impactSoft_medium_001.ogg",
+    "impact/impactSoft_medium_002.ogg"
+   ],
+   "vol": 0.5,
+   "pitch": 0.05,
+   "gap": 0.05,
+   "range": 28
+  },
+  "hit_generic": {
+   "files": [
+    "impact/impactGeneric_light_000.ogg",
+    "impact/impactGeneric_light_001.ogg",
+    "impact/impactGeneric_light_002.ogg"
+   ],
+   "vol": 0.45,
+   "pitch": 0.05,
+   "gap": 0.05,
+   "range": 28
+  },
+  "cast_slam": {
+   "files": [
+    "rpg/chop.ogg"
+   ],
+   "vol": 0.65,
+   "pitch": 0.04,
+   "range": 30
+  },
+  "cast_sweep": {
+   "files": [
+    "rpg/drawKnife3.ogg"
+   ],
+   "vol": 0.65,
+   "pitch": 0.04,
+   "range": 30
+  },
+  "cast_swing": {
+   "files": [
+    "rpg/knifeSlice.ogg"
+   ],
+   "vol": 0.6,
+   "pitch": 0.04,
+   "range": 30
+  },
+  "cast_guard": {
+   "files": [
+    "scifi/forceField_000.ogg"
+   ],
+   "vol": 0.5,
+   "range": 30
+  },
+  "cast_punch": {
+   "files": [
+    "impact/impactPunch_heavy_000.ogg"
+   ],
+   "vol": 0.6,
+   "pitch": 0.04,
+   "range": 30
+  },
+  "cast_leap": {
+   "files": [
+    "digital/phaseJump1.ogg"
+   ],
+   "vol": 0.6,
+   "range": 36
+  },
+  "cast_dark": {
+   "files": [
+    "digital/lowRandom.ogg"
+   ],
+   "vol": 0.5,
+   "range": 30
+  },
+  "cast_ghost": {
+   "files": [
+    "digital/phaserDown2.ogg"
+   ],
+   "vol": 0.5,
+   "range": 30
+  },
+  "cast_chain": {
+   "files": [
+    "rpg/metalLatch.ogg"
+   ],
+   "vol": 0.7,
+   "pitch": 0.03,
+   "range": 32
+  },
+  "cast_arrow_big": {
+   "files": [
+    "scifi/laserLarge_000.ogg"
+   ],
+   "vol": 0.65,
+   "range": 40
+  },
+  "cast_bolt": {
+   "files": [
+    "scifi/laserSmall_004.ogg"
+   ],
+   "vol": 0.5,
+   "pitch": 0.04,
+   "range": 30
+  },
+  "cast_bell": {
+   "files": [
+    "impact/impactBell_heavy_000.ogg"
+   ],
+   "vol": 0.6,
+   "range": 34
+  },
+  "cast_echo": {
+   "files": [
+    "impact/impactBell_heavy_001.ogg"
+   ],
+   "vol": 0.4,
+   "range": 30
+  },
+  "cast_silence": {
+   "files": [
+    "digital/zapTwoTone.ogg"
+   ],
+   "vol": 0.5,
+   "range": 34
+  },
+  "cast_cage": {
+   "files": [
+    "impact/impactBell_heavy_004.ogg"
+   ],
+   "vol": 0.7,
+   "range": 36
+  },
+  "cast_dash": {
+   "files": [
+    "digital/phaseJump2.ogg"
+   ],
+   "vol": 0.5,
+   "pitch": 0.04,
+   "range": 30
+  },
+  "cast_throw": {
+   "files": [
+    "rpg/knifeSlice2.ogg"
+   ],
+   "vol": 0.55,
+   "pitch": 0.05,
+   "range": 30
+  },
+  "cast_place": {
+   "files": [
+    "impact/impactWood_medium_000.ogg",
+    "impact/impactWood_medium_001.ogg",
+    "impact/impactWood_medium_002.ogg"
+   ],
+   "vol": 0.55,
+   "pitch": 0.05,
+   "range": 28
+  },
+  "cast_rope": {
+   "files": [
+    "rpg/creak1.ogg"
+   ],
+   "vol": 0.5,
+   "range": 30
+  },
+  "cast_buff": {
+   "files": [
+    "digital/powerUp4.ogg"
+   ],
+   "vol": 0.45,
+   "range": 30
+  },
+  "cast_buff2": {
+   "files": [
+    "digital/powerUp6.ogg"
+   ],
+   "vol": 0.45,
+   "range": 30
+  },
+  "cast_heal": {
+   "files": [
+    "digital/powerUp1.ogg"
+   ],
+   "vol": 0.5,
+   "range": 32
+  },
+  "cast_zone": {
+   "files": [
+    "scifi/forceField_002.ogg"
+   ],
+   "vol": 0.5,
+   "range": 34
+  },
+  "cast_cleanse": {
+   "files": [
+    "interface/glass_002.ogg"
+   ],
+   "vol": 0.5,
+   "range": 30
+  },
+  "cast_ultheal": {
+   "files": [
+    "digital/powerUp11.ogg"
+   ],
+   "vol": 0.65,
+   "range": 40
+  },
+  "cast_vine": {
+   "files": [
+    "scifi/slime_000.ogg"
+   ],
+   "vol": 0.65,
+   "pitch": 0.12,
+   "range": 30
+  },
+  "cast_shield": {
+   "files": [
+    "scifi/forceField_003.ogg"
+   ],
+   "vol": 0.5,
+   "range": 30
+  },
+  "cast_generic": {
+   "files": [
+    "digital/zap1.ogg"
+   ],
+   "vol": 0.4,
+   "pitch": 0.04,
+   "range": 30
+  },
+  "fx_slam": {
+   "files": [
+    "impact/impactPlate_heavy_000.ogg",
+    "impact/impactPlate_heavy_001.ogg",
+    "impact/impactPlate_heavy_002.ogg"
+   ],
+   "vol": 0.7,
+   "pitch": 0.04,
+   "range": 34
+  },
+  "fx_land": {
+   "files": [
+    "scifi/lowFrequency_explosion_000.ogg"
+   ],
+   "vol": 0.75,
+   "gap": 0.2,
+   "range": 40
+  },
+  "fx_sweep": {
+   "files": [
+    "impact/impactPlate_medium_000.ogg",
+    "impact/impactPlate_medium_001.ogg",
+    "impact/impactPlate_medium_002.ogg"
+   ],
+   "vol": 0.55,
+   "pitch": 0.04,
+   "range": 32
+  },
+  "fx_knock": {
+   "files": [
+    "impact/impactPunch_heavy_001.ogg",
+    "impact/impactPunch_heavy_002.ogg",
+    "impact/impactPunch_heavy_003.ogg"
+   ],
+   "vol": 0.6,
+   "pitch": 0.04,
+   "range": 30
+  },
+  "fx_wallhit": {
+   "files": [
+    "impact/impactWood_heavy_000.ogg",
+    "impact/impactWood_heavy_001.ogg",
+    "impact/impactWood_heavy_002.ogg"
+   ],
+   "vol": 0.6,
+   "pitch": 0.04,
+   "range": 30
+  },
+  "fx_flash": {
+   "files": [
+    "digital/phaseJump4.ogg"
+   ],
+   "vol": 0.55,
+   "range": 36
+  },
+  "fx_teleport": {
+   "files": [
+    "digital/phaseJump5.ogg"
+   ],
+   "vol": 0.55,
+   "range": 40
+  },
+  "fx_silence": {
+   "files": [
+    "digital/zapTwoTone2.ogg"
+   ],
+   "vol": 0.5,
+   "range": 34
+  },
+  "fx_bell_drop": {
+   "files": [
+    "impact/impactBell_heavy_003.ogg"
+   ],
+   "vol": 0.85,
+   "range": 44
+  },
+  "fx_cage_end": {
+   "files": [
+    "impact/impactGlass_heavy_000.ogg",
+    "impact/impactGlass_heavy_001.ogg",
+    "impact/impactGlass_heavy_002.ogg"
+   ],
+   "vol": 0.6,
+   "pitch": 0.04,
+   "range": 34
+  },
+  "fx_rope": {
+   "files": [
+    "rpg/creak2.ogg"
+   ],
+   "vol": 0.45,
+   "range": 28
+  },
+  "fx_break": {
+   "files": [
+    "impact/impactWood_heavy_003.ogg"
+   ],
+   "vol": 0.6,
+   "pitch": 0.04,
+   "range": 30
+  },
+  "fx_trap_set": {
+   "files": [
+    "rpg/metalLatch.ogg"
+   ],
+   "vol": 0.4,
+   "range": 26
+  },
+  "fx_trap_snap": {
+   "files": [
+    "impact/impactMetal_heavy_000.ogg",
+    "impact/impactMetal_heavy_001.ogg",
+    "impact/impactMetal_heavy_002.ogg"
+   ],
+   "vol": 0.7,
+   "pitch": 0.04,
+   "range": 32
+  },
+  "fx_holy": {
+   "files": [
+    "digital/powerUp12.ogg"
+   ],
+   "vol": 0.6,
+   "range": 40
+  },
+  "fx_petal": {
+   "files": [
+    "impact/impactSoft_heavy_000.ogg",
+    "impact/impactSoft_heavy_001.ogg",
+    "impact/impactSoft_heavy_002.ogg"
+   ],
+   "vol": 0.6,
+   "pitch": 0.04,
+   "range": 32
+  },
+  "fx_shield": {
+   "files": [
+    "scifi/forceField_004.ogg"
+   ],
+   "vol": 0.4,
+   "range": 28
+  },
+  "fx_pierce": {
+   "files": [
+    "scifi/laserRetro_003.ogg"
+   ],
+   "vol": 0.35,
+   "pitch": 0.05,
+   "range": 28
+  },
+  "hit_knife": {
+   "files": [
+    "impact/impactMetal_light_000.ogg",
+    "impact/impactMetal_light_001.ogg",
+    "impact/impactMetal_light_002.ogg"
+   ],
+   "vol": 0.5,
+   "pitch": 0.06,
+   "gap": 0.05,
+   "range": 30
+  },
+  "hit_hook": {
+   "files": [
+    "impact/impactMetal_medium_003.ogg",
+    "impact/impactMetal_medium_004.ogg"
+   ],
+   "vol": 0.55,
+   "pitch": 0.05,
+   "range": 30
+  },
+  "hit_chain": {
+   "files": [
+    "impact/impactMetal_heavy_003.ogg",
+    "impact/impactMetal_heavy_004.ogg"
+   ],
+   "vol": 0.65,
+   "pitch": 0.05,
+   "range": 30
+  },
+  "hit_giant": {
+   "files": [
+    "impact/impactWood_heavy_003.ogg",
+    "impact/impactWood_heavy_004.ogg"
+   ],
+   "vol": 0.8,
+   "pitch": 0.04,
+   "range": 40
+  },
+  "hit_light": {
+   "files": [
+    "impact/impactGlass_medium_000.ogg",
+    "impact/impactGlass_medium_001.ogg",
+    "impact/impactGlass_medium_002.ogg"
+   ],
+   "vol": 0.55,
+   "pitch": 0.05,
+   "range": 30
+  },
+  "hit_leaf": {
+   "files": [
+    "impact/impactSoft_heavy_003.ogg",
+    "impact/impactSoft_heavy_004.ogg"
+   ],
+   "vol": 0.5,
+   "pitch": 0.05,
+   "range": 30
+  },
+  "atk_bite": {
+   "files": [
+    "impact/impactGeneric_light_000.ogg",
+    "impact/impactGeneric_light_001.ogg",
+    "impact/impactGeneric_light_002.ogg"
+   ],
+   "vol": 0.5,
+   "pitch": 0.08,
+   "gap": 0.08,
+   "range": 26
+  },
+  "cast_spit": {
+   "files": [
+    "scifi/slime_000.ogg"
+   ],
+   "vol": 0.6,
+   "pitch": 0.05,
+   "range": 30
+  },
+  "fx_splat": {
+   "files": [
+    "scifi/slime_000.ogg"
+   ],
+   "vol": 0.55,
+   "pitch": 0.14,
+   "range": 30
+  },
+  "fx_sink": {
+   "files": [
+    "impact/impactSoft_heavy_002.ogg"
+   ],
+   "vol": 0.65,
+   "pitch": 0.05,
+   "range": 32
+  },
+  "cast_fire": {
+   "files": [
+    "scifi/laserLarge_001.ogg"
+   ],
+   "vol": 0.5,
+   "pitch": 0.05,
+   "range": 30
+  },
+  "fx_fireburst": {
+   "files": [
+    "scifi/explosionCrunch_000.ogg"
+   ],
+   "vol": 0.55,
+   "pitch": 0.05,
+   "range": 32
+  },
+  "cast_wing": {
+   "files": [
+    "rpg/cloth3.ogg",
+    "rpg/cloth4.ogg"
+   ],
+   "vol": 0.85,
+   "pitch": 0.05,
+   "range": 32
+  },
+  "fx_gust": {
+   "files": [
+    "impact/impactSoft_heavy_000.ogg",
+    "impact/impactSoft_heavy_001.ogg"
+   ],
+   "vol": 0.7,
+   "pitch": 0.05,
+   "range": 32
+  },
+  "cast_roar": {
+   "files": [
+    "scifi/lowFrequency_explosion_001.ogg"
+   ],
+   "vol": 0.7,
+   "pitch": 0.03,
+   "range": 42
+  },
+  "fx_meteor": {
+   "files": [
+    "scifi/explosionCrunch_001.ogg",
+    "scifi/explosionCrunch_002.ogg"
+   ],
+   "vol": 0.6,
+   "pitch": 0.06,
+   "range": 40
+  },
+  "turret_lock": {
+   "files": [
+    "digital/threeTone1.ogg"
+   ],
+   "vol": 0.75,
+   "gap": 1.2
+  }
+ },
+ "attack": {
+  "spider": {
+   "swing": "atk_dagger",
+   "hit": "hit_blade"
+  },
+  "vanguard": {
+   "swing": "atk_sword",
+   "hit": "hit_metal"
+  },
+  "reaper": {
+   "swing": "atk_scythe",
+   "hit": "hit_plate"
+  },
+  "monk": {
+   "swing": "atk_fist",
+   "hit": "hit_punch"
+  },
+  "acrobat": {
+   "swing": "atk_dagger",
+   "hit": "hit_blade"
+  },
+  "hunter": {
+   "swing": "atk_bow",
+   "hit": "hit_wood"
+  },
+  "cleric": {
+   "swing": "atk_holy",
+   "hit": "hit_glass"
+  },
+  "druid": {
+   "swing": "atk_nature",
+   "hit": "hit_soft"
+  },
+  "_default": {
+   "swing": "atk_generic",
+   "hit": "hit_generic"
+  },
+  "serpent": {
+   "swing": "atk_bite",
+   "hit": "hit_soft"
+  },
+  "dragon": {
+   "swing": "cast_fire",
+   "hit": "hit_soft"
+  }
+ },
+ "cast": {
+  "self_aoe:slam": "cast_slam",
+  "self_aoe:sweep": "cast_sweep",
+  "self_aoe": "cast_swing",
+  "counter_shield": "cast_guard",
+  "knockback": "cast_punch",
+  "teleport_strike": "cast_leap",
+  "lifesteal_buff": "cast_dark",
+  "ghost_walk": "cast_ghost",
+  "skillshot:chain": "cast_chain",
+  "skillshot:giant_arrow": "cast_arrow_big",
+  "skillshot": "cast_bolt",
+  "volley": "cast_throw",
+  "leap_slam": "cast_leap",
+  "zone:web": "cast_place",
+  "cocoon": "cast_place",
+  "cone": "cast_bell",
+  "echo_guard": "cast_echo",
+  "silence_marked": "cast_silence",
+  "cage": "cast_cage",
+  "hook_dash": "cast_dash",
+  "dash": "cast_dash",
+  "knife_throw": "cast_throw",
+  "anchor": "cast_place",
+  "trap": "cast_place",
+  "rope_walk": "cast_rope",
+  "self_buff": "cast_buff",
+  "ally_buff": "cast_buff2",
+  "ally_heal": "cast_heal",
+  "team_heal": "cast_ultheal",
+  "zone": "cast_zone",
+  "cleanse": "cast_cleanse",
+  "line_aoe": "cast_vine",
+  "ally_shield": "cast_shield",
+  "_default": "cast_generic",
+  "spit_pool": "cast_spit",
+  "lunge": "cast_dash",
+  "serpent_slam": "cast_swing",
+  "dive": "fx_sink",
+  "tornado": "cast_wing",
+  "wing_sweep": "cast_wing",
+  "sky_dive": "cast_roar",
+  "spit_pool:fire": "cast_fire"
+ },
+ "fx": {
+  "spell:heal": "cast_heal",
+  "spell:ghost": "cast_ghost",
+  "spell:barrier": "fx_shield",
+  "spell:cleanse": "cast_cleanse",
+  "spell:exhaust": "cast_dark",
+  "spell:ignite": "fx_trap_snap",
+  "slam:slam": "fx_slam",
+  "slam:land": "fx_land",
+  "slam:sweep": "fx_sweep",
+  "knock": "fx_knock",
+  "wallhit": "fx_wallhit",
+  "flash": "fx_flash",
+  "teleport": "fx_teleport",
+  "recall": "recall_done",
+  "silence_ring": "fx_silence",
+  "bell_drop": "fx_bell_drop",
+  "cage_end": "fx_cage_end",
+  "rope_pull": "fx_rope",
+  "rope_up": "fx_rope",
+  "anchor_break": "fx_break",
+  "trap_set": "fx_trap_set",
+  "trap_snap": "fx_trap_snap",
+  "holy": "fx_holy",
+  "petal_burst": "fx_petal",
+  "shield": "fx_shield",
+  "pierce": "fx_pierce",
+  "plate": "struct_plate",
+  "relic": "relic",
+  "knife_hit": "hit_knife",
+  "knife_fast_hit": "hit_knife",
+  "hook_hit": "hit_hook",
+  "chain_hit": "hit_chain",
+  "giant_arrow_hit": "hit_giant",
+  "light_bolt_hit": "hit_light",
+  "leaf_bolt_hit": "hit_leaf",
+  "snowball_hit": "hit_soft",
+  "web_hit": "hit_soft",
+  "spine_hit": "hit_knife",
+  "slam:pounce": "fx_land",
+  "cocoon_hatch": "hit_soft",
+  "cocoon_break": "hit_soft",
+  "spiderling_pop": "hit_soft",
+  "spit_land": "fx_splat",
+  "slam:serpent": "fx_slam",
+  "slam:dive": "fx_land",
+  "bite": "hit_soft",
+  "spit_land:fire": "fx_fireburst",
+  "gust": "fx_gust",
+  "tornado_hit": "hit_soft",
+  "fire_bolt_hit": "hit_soft",
+  "slam:wing": "fx_sweep",
+  "slam:skyfire": "fx_meteor",
+  "turret_lock": "turret_lock"
+ },
+ "projectile": {
+  "turret_shot": "turret_shot",
+  "turret_shot_2": "turret_shot",
+  "turret_shot_3": "turret_shot",
+  "minion_bolt": "minion_bolt",
+  "cannon_ball": "cannon_shot"
+ }
+}

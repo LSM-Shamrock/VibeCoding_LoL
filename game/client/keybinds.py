@@ -7,13 +7,15 @@ import os
 
 import pygame
 
+from ..shared.spells import DEFAULT_SPELLS, SPELLS, valid_pair
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PATH = os.path.join(ROOT, "keybinds.json")
 
 # (행동, 설정 창에 보일 이름) — 화면에 나오는 순서
 ACTIONS = [
     ("Q", "스킬 Q"), ("W", "스킬 W"), ("E", "스킬 E"), ("R", "스킬 R"),
-    ("D", "점멸"), ("F", "표식"), ("recall", "귀환"),
+    ("D", "소환사 주문 1"), ("F", "소환사 주문 2"), ("recall", "귀환"),
     ("attack_move", "공격 이동"), ("stop", "정지"),
     ("shop", "상점"), ("score", "점수판"),
     ("cam_lock", "카메라 고정 전환"), ("cam_center", "카메라 내 챔피언"),
@@ -44,7 +46,7 @@ def key_name(e):
 class KeyBinds:
     def __init__(self):
         self.binds = dict(DEFAULTS)
-        self.spells_swapped = False     # True 면 D 키에 표식, F 키에 점멸 (챔피언 선택 화면에서 변경)
+        self.spells = list(DEFAULT_SPELLS)      # [D 키 주문, F 키 주문] (챔피언 선택 화면에서 고른다)
 
     @classmethod
     def load(cls):
@@ -52,7 +54,11 @@ class KeyBinds:
         try:
             with open(PATH, encoding="utf-8") as f:
                 data = json.load(f)
-            kb.spells_swapped = bool(data.pop("_spells_swapped", False))
+            if data.pop("_spells_swapped", False):          # 예전 저장 파일: 점멸/표식 자리 바꾸기
+                kb.spells = list(reversed(DEFAULT_SPELLS))
+            sp = data.pop("_spells", None)
+            if valid_pair(sp):
+                kb.spells = list(sp)
             for action, (sc, name) in data.items():
                 if action in DEFAULTS:
                     kb.binds[action] = (int(sc), str(name))
@@ -69,7 +75,7 @@ class KeyBinds:
         try:
             with open(PATH, "w", encoding="utf-8") as f:
                 data = {a: list(v) for a, v in self.binds.items()}
-                data["_spells_swapped"] = self.spells_swapped
+                data["_spells"] = self.spells
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except OSError:
             pass
@@ -96,13 +102,17 @@ class KeyBinds:
         return True
 
     def spell_at(self, slot):
-        """D/F 자리(키)에 들어 있는 주문 id ("D" 점멸, "F" 표식)."""
-        if self.spells_swapped:
-            return "F" if slot == "D" else "D"
-        return slot
+        """D/F 자리(키)에 들어 있는 소환사 주문 id (예: "flash")."""
+        return self.spells[0 if slot == "D" else 1]
 
-    def swap_spells(self):
-        self.spells_swapped = not self.spells_swapped
+    def set_spell(self, slot, spell):
+        """D/F 자리의 주문을 바꾼다. 다른 자리에 이미 있는 주문이면 두 자리를 맞바꾼다."""
+        i = 0 if slot == "D" else 1
+        if spell not in SPELLS or self.spells[i] == spell:
+            return
+        if self.spells[1 - i] == spell:
+            self.spells[1 - i] = self.spells[i]
+        self.spells[i] = spell
         self.save()
 
     def reset(self):

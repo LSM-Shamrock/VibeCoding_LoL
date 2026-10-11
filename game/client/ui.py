@@ -3,13 +3,16 @@ import os
 
 import pygame
 
+_FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "assets", "fonts")
+# 게임에 같이 들어 있는 Noto Sans KR (OFL). 맑은 고딕은 작은 크기에서 ㅏ·ㅓ 세로 획이 사라지는 문제가 있어 맨 뒤 대체용.
 FONT_CANDIDATES = [
+    os.path.join(_FONT_DIR, "NotoSansKR-Regular.otf"),
     r"C:\Windows\Fonts\malgun.ttf",
     r"C:\Windows\Fonts\malgunbd.ttf",
     "/System/Library/Fonts/AppleSDGothicNeo.ttc",
     "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
 ]
-BOLD_CANDIDATES = [r"C:\Windows\Fonts\malgunbd.ttf"]
+BOLD_CANDIDATES = [os.path.join(_FONT_DIR, "NotoSansKR-Bold.otf"), r"C:\Windows\Fonts\malgunbd.ttf"]
 
 # 색상 테마
 BG = (12, 18, 32)
@@ -28,6 +31,19 @@ TEAM_UI = {0: BLUE_C, 1: RED_C}
 _fonts = {}
 _text_cache = {}
 _mouse_mapper = None
+_sfx = None
+_hot = None         # 마우스가 올라가 있는 버튼 (자리 기준). 매 프레임 버튼을 새로 만들어도 소리가 반복되지 않게 전역으로 기억
+
+
+def set_sfx(fn):
+    """효과음 재생 함수 연결 (app.audio.play). 버튼 클릭·마우스 올림 소리에 쓴다."""
+    global _sfx
+    _sfx = fn
+
+
+def sfx(name, **kw):
+    if _sfx:
+        _sfx(name, **kw)
 
 
 def set_mouse_mapper(fn):
@@ -51,12 +67,41 @@ def _font_path(bold):
     return None
 
 
+class _SuperFont:
+    """작은 글자용 폰트: 2배 크기로 그린 뒤 절반으로 줄인다.
+    말굿 고딕을 작은 크기로 바로 그리면 힌팅 때문에 ㅏ·ㅓ 의 세로 획이 사라져 글자가 깨져 보인다."""
+    S = 2
+
+    def __init__(self, path, size, bold):
+        if path:
+            self.f = pygame.font.Font(path, size * self.S)
+        else:
+            self.f = pygame.font.SysFont("malgungothic,applegothic,nanumgothic,notosanscjkkr,arial", size * self.S, bold=bold)
+
+    def size(self, s):
+        w, h = self.f.size(s)
+        return (w + 1) // self.S, (h + 1) // self.S
+
+    def render(self, s, aa, color, *a):
+        big = self.f.render(s, True, color)
+        w, h = big.get_size()
+        return pygame.transform.smoothscale(big, (max(1, w // self.S), max(1, h // self.S)))
+
+    def get_height(self):
+        return self.f.get_height() // self.S
+
+    def get_linesize(self):
+        return self.f.get_linesize() // self.S
+
+
 def font(size, bold=False):
     key = (size, bold)
     f = _fonts.get(key)
     if f is None:
         path = _font_path(bold)
-        if path:
+        if size <= 16:
+            f = _SuperFont(path, size, bold)
+        elif path:
             f = pygame.font.Font(path, size)
         else:
             f = pygame.font.SysFont("malgungothic,applegothic,nanumgothic,notosanscjkkr,arial", size, bold=bold)
@@ -85,13 +130,16 @@ def text(surface, s, pos, size=16, color=TEXT, anchor="topleft", bold=False, sha
     return rect
 
 
+NO_LINE_START = ",.!?)]}%·、。」』》:;"      # 줄 맨 앞에 오면 보기 싫은 글자 (앞 줄에 붙여 둔다)
+
+
 def wrap(s, size, width, bold=False):
     f = font(size, bold)
     lines = []
     for para in str(s).split("\n"):
         cur = ""
         for ch in para:
-            if f.size(cur + ch)[0] > width and cur:
+            if f.size(cur + ch)[0] > width and cur and ch not in NO_LINE_START:
                 lines.append(cur)
                 cur = ch
             else:
@@ -160,6 +208,7 @@ class Button:
         if not (self.visible and self.enabled):
             return False
         if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 and self.rect.collidepoint(e.pos):
+            sfx("ui_click")
             self.on_click()
             return True
         return False
@@ -167,7 +216,16 @@ class Button:
     def draw(self, surface):
         if not self.visible:
             return
+        global _hot
         hover = self.rect.collidepoint(mouse_pos())
+        key = (self.rect.x, self.rect.y, self.rect.w, self.rect.h)
+        if hover:
+            if _hot != key:
+                _hot = key
+                if self.enabled:
+                    sfx("ui_hover")
+        elif _hot == key:
+            _hot = None
         if not self.enabled:
             col = (45, 50, 62)
         elif hover:
@@ -193,6 +251,7 @@ class TextInput:
             was = self.focused
             self.focused = self.rect.collidepoint(e.pos)
             if self.focused and not was:
+                sfx("ui_click")
                 pygame.key.start_text_input()
                 pygame.key.set_text_input_rect(self.rect)
             elif was and not self.focused:

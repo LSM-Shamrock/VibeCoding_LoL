@@ -4,6 +4,7 @@
 server.py 로 전용 서버만 따로 실행할 수도 있다.
 """
 import itertools
+import random
 import socket
 import threading
 import time
@@ -11,6 +12,7 @@ import time
 from ..shared import data as gamedata
 from ..shared.constants import BLUE, DEFAULT_PORT, MAX_TEAM_SIZE, RED, SELECT_TIME, SNAPSHOT_EVERY, TICK_RATE
 from ..shared.net import Connection, encode
+from ..shared.spells import DEFAULT_SPELLS, SPELL_ORDER, valid_pair
 from .sim import Simulation
 
 RETURN_TO_ROOM_DELAY = 8.0
@@ -33,6 +35,7 @@ class Member:
         self.client = client
         self.champ = None
         self.locked = False
+        self.spells = list(DEFAULT_SPELLS)   # 소환사 주문 [D 칸, F 칸] (선택 화면에서 고른다)
         self.left = False            # 게임 도중 나감 (챔피언은 그 자리에 가만히 남는다)
 
     def public(self):
@@ -175,7 +178,7 @@ class GameServer:
         elif t == "create_room":
             if room:
                 return self.error(client, "이미 방에 들어가 있습니다.")
-            size = MAX_TEAM_SIZE        # 방은 항상 5v5 (각 팀 1명 이상이면 시작 → 1v1, 2v2 ... 자유)
+            size = MAX_TEAM_SIZE        # 방은 항상 3v3 (각 팀 1명 이상이면 시작 → 1v1, 2v2 ... 자유)
             name = (str(msg.get("name") or f"{client.name}의 방")).strip()[:24]
             r = Room(next(self._room_ids), name, size, client.key)
             self.rooms[r.id] = r
@@ -222,10 +225,14 @@ class GameServer:
             if not room.team_members(BLUE) or not room.team_members(RED):
                 return self.error(client, "양 팀에 최소 1명씩 있어야 합니다.")
             self.begin_select(room)
+        elif t == "spells":
+            m = room.member(client.key)
+            if m and room.phase in ("waiting", "select") and valid_pair(msg.get("spells")):
+                m.spells = list(msg["spells"])
         elif t == "pick":
             m = room.member(client.key)
             cid = msg.get("champ")
-            if room.phase == "select" and m and not m.locked and gamedata.champion(cid):
+            if room.phase == "select" and m and not m.locked and cid in gamedata.champions():
                 m.champ = cid
                 self.broadcast_room(room)
         elif t == "lock":
@@ -289,17 +296,25 @@ class GameServer:
             m.champ = None
             m.locked = False
             if m.bot:
-                m.champ = gamedata.default_champion_id()
+                m.champ = self.pick_bot_champion(room, m)
                 m.locked = True
+                m.spells = ["flash", random.choice([s for s in SPELL_ORDER if s != "flash"])]
         self.broadcast_room(room)
+
+    @staticmethod
+    def pick_bot_champion(room, member):
+        """봇은 같은 팀에서 아직 안 나온 챔피언을 무작위로 고른다 (다 나왔으면 아무거나)."""
+        ids = list(gamedata.champions())
+        used = {m.champ for m in room.members if m.team == member.team and m.champ}
+        return random.choice([cid for cid in ids if cid not in used] or ids)
 
     def begin_game(self, room):
         for m in room.members:
             if not m.champ:
                 m.champ = gamedata.default_champion_id()
             m.locked = True
-        members = [{"key": m.key, "name": m.name, "team": m.team, "bot": m.bot, "champ": m.champ}
-                   for m in room.members]
+        members = [{"key": m.key, "name": m.name, "team": m.team, "bot": m.bot, "champ": m.champ,
+                    "spells": m.spells} for m in room.members]
         room.sim = Simulation(members)
         room.phase = "ingame"
         room.tick = 0

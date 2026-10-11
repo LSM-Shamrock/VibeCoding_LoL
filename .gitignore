@@ -34,3 +34,6 @@ shots/
 
 # 개인 조작키 설정 (게임 안 ESC 설정 창에서 저장)
 keybinds.json
+
+# Personal sound settings
+settings.json

@@ -13,11 +13,11 @@ SNAPSHOT_EVERY = 2        # N틱마다 스냅샷 전송 (15Hz)
 BLUE, RED = 0, 1
 TEAM_NAMES = {BLUE: "블루팀", RED: "레드팀"}
 
-MAX_TEAM_SIZE = 5
+MAX_TEAM_SIZE = 3
 SELECT_TIME = 40.0        # 챔피언 선택 제한 시간 (초)
 
 # ---- 칼바람 규칙 ----
-START_LEVEL = 3
+START_LEVEL = 1
 MAX_LEVEL = 18
 START_GOLD = 1400
 PASSIVE_GOLD_PER_SEC = 3.0
@@ -61,6 +61,36 @@ MARK_SPEED = 25.0
 MARK_COOLDOWN = 40.0
 MARK_RECAST_TIME = 3.0
 MARK_DASH_SPEED = 24.0
+
+# 소환사 주문 (점멸·표식 외)
+HEAL_COOLDOWN = 240.0
+HEAL_BASE = 80.0              # 회복량 = 기본 + 레벨당 × 레벨
+HEAL_PER_LEVEL = 14.0
+HEAL_RANGE = 6.0              # 이 거리 안의 가장 체력이 낮은 아군 챔피언도 함께 회복
+HEAL_ALLY_RATIO = 0.5         # 아군이 받는 회복량 비율
+HEAL_SPEED_PCT = 0.30         # 회복 직후 이동 속도 증가
+HEAL_SPEED_TIME = 1.0
+GHOST_COOLDOWN = 210.0
+GHOST_TIME = 8.0
+GHOST_SPEED_PCT = 0.30
+BARRIER_COOLDOWN = 180.0
+BARRIER_BASE = 100.0          # 보호막 = 기본 + 레벨당 × 레벨
+BARRIER_PER_LEVEL = 22.0
+BARRIER_TIME = 2.0
+CLEANSE_COOLDOWN = 210.0
+CLEANSE_IMMUNE = 0.5          # 해제 직후 군중 제어 면역 시간
+EXHAUST_COOLDOWN = 210.0
+EXHAUST_RANGE = 6.5
+EXHAUST_TIME = 2.5
+EXHAUST_SLOW = 0.30
+EXHAUST_DMG_REDUCE = 0.35     # 탈진한 적이 주는 피해 감소
+IGNITE_COOLDOWN = 180.0
+IGNITE_RANGE = 6.0
+IGNITE_TIME = 5.0
+IGNITE_BASE = 50.0            # 총 고정 피해 = 기본 + 레벨당 × 레벨 (지속 시간 동안 나눠서)
+IGNITE_PER_LEVEL = 20.0
+IGNITE_TICK = 0.5
+IGNITE_HEAL_CUT = 0.40        # 점화에 걸린 적의 받는 회복량 감소
 
 
 def xp_to_next(level):
