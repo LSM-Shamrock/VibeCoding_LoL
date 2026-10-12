@@ -128,6 +128,9 @@ class Champion(Unit):
         self.level = START_LEVEL
         self.xp = 0.0
         self.gold = float(START_GOLD)
+        self.kill_streak = 0        # 죽지 않고 이어진 킬 수 (연속 처치 안내)
+        self.multi_n = 0            # 짧은 시간 안에 이어진 킬 수 (더블킬 ~ 펜타킬)
+        self.multi_t = -99.0
         self.items = []
         self.ranks = {"Q": 0, "W": 0, "E": 0, "R": 0}
         self.skill_points = START_LEVEL

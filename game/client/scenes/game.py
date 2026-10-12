@@ -430,7 +430,7 @@ class GameScene(Scene):
         # 텍스트 입력(IME)이 켜져 있으면 한글 모드에서 스킬 키가 입력기로 빠져 나가므로 끈다
         pygame.key.stop_text_input()
         self.app.renderer.vision = (self.vis_tex, self.vis_rect)
-        self.audio.play("vo_start")
+        self.announce("welcome", 9)
 
     # ------------------------------------------------------------------ 시야
     def update_vision(self):
@@ -511,7 +511,7 @@ class GameScene(Scene):
             self.winner = msg["winner"]
             self.over_at = time.time()
             self.audio.play_music(None, 2500)       # 결과 화면에서는 BGM 을 서서히 끈다
-            self.audio.play("vo_win" if self.winner == self.my_team else "vo_lose")
+            self.announce("victory" if self.winner == self.my_team else "defeat", 10, interrupt=True)
 
     def apply_snapshot(self, s):
         now = time.time()
@@ -628,9 +628,8 @@ class GameScene(Scene):
             self.killfeed = self.killfeed[-6:]
             if ev["k"] == self.my_id:
                 self.sfx("kill_self")
-                if now - self.last_kill_at < 12.0:
-                    self.sfx("vo_multikill")
                 self.last_kill_at = now
+            self.kill_announce(ev)
             self.add_chat([(ev["kn"], ui.TEAM_UI.get(ev["kt"], ui.TEXT)), (" 님이 ", ui.TEXT_DIM),
                            (ev["vn"], ui.TEAM_UI.get(ev["vt"], ui.TEXT)), (" 님을 처치했습니다.", ui.TEXT_DIM)])
             if ev["v"] == self.my_id:
@@ -640,8 +639,10 @@ class GameScene(Scene):
         elif e == "announce":
             self.announces.append((now, ev["text"], ui.TEXT))
             text = ev["text"]
-            self.sfx("vo_firstblood" if "선취점" in text else ("inhib_respawn" if "재생성" in text else "ui_notify"))
+            self.sfx("inhib_respawn" if "재생성" in text else "ui_notify")
             self.add_chat([(ev["text"], ui.GOLD)])
+        elif e == "vo":
+            self.vo_event(ev)
         elif e == "levelup":
             self.sfx_unit(ev["d"], "levelup", 1.0 if ev["d"] == self.my_id else 0.45)
             pos = self.entity_pos(ev["d"])
@@ -864,6 +865,59 @@ class GameScene(Scene):
         if name:
             world = not name.startswith(("ui_", "vo_"))     # 화면(UI)·아나운서 소리는 그대로, 게임 속 소리는 조금 줄여서
             self.audio.play(name, None if x is None else (x, z), vol, world=world)
+
+    def announce(self, name, prio=1, interrupt=False):
+        """아나운서 음성 (assets/sounds/announcer/). 이름은 vo_ 를 뺀 것."""
+        self.audio.announce("vo_" + name, prio, interrupt)
+
+    STREAK_ALLY = {3: "spree", 4: "rampage", 5: "unstoppable", 6: "dominating", 7: "legend_arrives"}
+    STREAK_ENEMY = {3: "e_spree", 5: "e_unstoppable", 6: "e_dominating", 7: "e_godlike", 8: "e_legendary"}
+
+    def kill_announce(self, ev):
+        """킬 한 번에 아나운서 한 마디: 멀티킬 > 연속킬 끊기(마무리) > 선취점 > 연속 처치 > 내가 죽음/아군 사망/내가 처치."""
+        mine = self.my_team
+        ally = ev["kt"] == mine
+        me_dead = ev["v"] == self.my_id
+        cands = []
+        mk, ks = ev.get("mk", 0), ev.get("ks", 0)
+        if mk >= 2:
+            base = {2: "double", 3: "triple", 4: "quadra"}.get(mk, "penta")
+            cands.append((10 + mk, base if ally else "e_" + base))
+        if ev.get("sd") and ally:
+            cands.append((8, "shutdown"))
+        if ev.get("fb"):
+            cands.append((7, "first_blood"))
+        if ks >= 3:
+            if ally:
+                name = self.STREAK_ALLY.get(ks, "legendary_kill" if ks >= 8 else None)
+            else:
+                name = self.STREAK_ENEMY.get(ks, "e_legendary_kill" if ks >= 9 else None)
+            if name:
+                cands.append((6, name))
+        if me_dead:
+            cands.append((5, "you_slain" if ev.get("ke", True) else "you_executed"))
+        elif ev["vt"] == mine:
+            cands.append((3, "ally_slain"))
+        elif ev["k"] == self.my_id:
+            cands.append((3, "slain_enemy"))
+        if cands:
+            prio, name = max(cands)
+            self.announce(name, prio)
+
+    def vo_event(self, ev):
+        """서버가 보낸 상황 안내: 포탑·억제기 파괴, 억제기 재생성 예고, 미니언 생성."""
+        key, tm = ev.get("key"), ev.get("tm")
+        mine = tm == self.my_team
+        if key == "minions_30":
+            self.announce("minions_30", 4)
+        elif key == "minions_spawned":
+            self.announce("minions_spawned", 4)
+        elif key == "turret_down" and not mine:
+            self.announce("turret_destroyed", 6)
+        elif key == "inhib_down":
+            self.announce("inhib_lost" if mine else "inhib_destroyed", 7)
+        elif key == "inhib_soon":
+            self.announce("inhib_respawn_soon" if mine else "e_inhib_respawn_soon", 4)
 
     def sfx_unit(self, uid, name, vol=1.0):
         """유닛 위치에서 나는 소리. 내 챔피언의 소리는 화면 어디를 보고 있든 들린다."""
@@ -1388,6 +1442,7 @@ class GameScene(Scene):
 
     # ------------------------------------------------------------------ 갱신
     def update(self, dt):
+        self.audio.tick_vo()
         for cid, e in self.champs.items():
             e.step(dt)
             st = e.d["st"] if e.d else ()

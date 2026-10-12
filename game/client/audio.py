@@ -42,6 +42,10 @@ class Audio:
         self.last_file = {}         # 소리 이름 → 마지막으로 고른 파일 (연달아 같은 걸 피한다)
         self.listener = (0.0, 0.0)  # 소리를 듣는 위치 (카메라가 보는 곳)
         self.missing = set()
+        self.vo_until = 0.0         # 아나운서 음성이 끝나는 시각 (겹쳐 나오지 않게 줄 세운다)
+        self.vo_queue = []          # [(우선순위, 들어온 시각, 소리 이름)]
+        self.vo_channel = None
+        self.last_snd = None
         self.music = None           # 지금 틀어 둔 BGM 이름 (None 이면 없음)
         self.music_ok = False
         self.load_settings()
@@ -222,8 +226,45 @@ class Audio:
             return False
         ch.set_volume(min(1.0, gain * left), min(1.0, gain * right))
         ch.play(snd)
+        self.last_snd = snd
+        self.last_channel = ch
         self.last_play[name] = now
         return True
+
+    # ------------------------------------------------------------ 아나운서 (한 번에 한 마디씩, 중요한 것부터)
+    def announce(self, name, prio=1, interrupt=False):
+        """아나운서 음성을 재생한다. 앞의 음성이 끝나지 않았으면 줄을 세우고(우선순위 높은 것부터),
+        오래 기다린 낮은 우선순위 음성은 버린다. interrupt=True 면 지금 나오는 음성을 끊고 바로 재생(승리·패배)."""
+        if not self.ok or self.muted or name not in self.defs:
+            return
+        now = time.time()
+        if interrupt:
+            self.vo_queue.clear()
+            if self.vo_channel is not None:
+                self.vo_channel.stop()
+            self.vo_until = 0.0
+        if now >= self.vo_until and not self.vo_queue:
+            self._play_vo(name, now)
+            return
+        self.vo_queue.append((prio, now, name))
+        self.vo_queue = self.vo_queue[-4:]
+
+    def _play_vo(self, name, now):
+        if self.play(name):
+            length = self.last_snd.get_length() if self.last_snd is not None else 2.0
+            self.vo_until = now + length + 0.25
+            self.vo_channel = getattr(self, "last_channel", None)
+
+    def tick_vo(self):
+        """매 프레임: 앞의 음성이 끝났으면 줄 선 것 중 가장 중요한 것을 재생 (5초 넘게 묵은 것은 버림)."""
+        if not self.vo_queue:
+            return
+        now = time.time()
+        self.vo_queue = [q for q in self.vo_queue if now - q[1] < 5.0]
+        if self.vo_queue and now >= self.vo_until:
+            best = max(self.vo_queue, key=lambda q: (q[0], -q[1]))
+            self.vo_queue.remove(best)
+            self._play_vo(best[2], now)
 
     # ------------------------------------------------------------ 게임 상황 → 소리 이름
     def attack_sound(self, champ_id, kind):

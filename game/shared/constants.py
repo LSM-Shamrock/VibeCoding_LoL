@@ -28,7 +28,7 @@ ASSIST_GOLD_TOTAL = 150
 ASSIST_WINDOW = 10.0      # 이 시간 안에 피해를 준 아군이 어시스트
 XP_SHARE_RANGE = 16.0
 
-FIRST_WAVE_TIME = 20.0
+FIRST_WAVE_TIME = 45.0       # 첫 미니언 웨이브 (환영 인사 → '30초 남았습니다' 안내 → 생성 순서가 되도록)
 WAVE_INTERVAL = 30.0
 INHIBITOR_RESPAWN = 300.0
 

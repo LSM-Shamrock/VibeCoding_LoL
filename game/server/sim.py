@@ -34,6 +34,8 @@ from .entities import (
 )
 
 MINION_AGGRO = 7.0
+MULTIKILL_WINDOW = 10.0          # 이 시간 안에 이어서 처치하면 더블킬·트리플킬 …
+INHIBITOR_SOON = 15.0           # 억제기 재생성 이만큼 전에 '곧 재생성' 안내
 TURRET_PERIOD = 0.85
 TURRET_CHAMP_DMG = 128.0        # 포탑 → 챔피언 기본 피해 (+분당 2.5, 연속 공격 시 증가)
 SLOTS = ("Q", "W", "E", "R")
@@ -76,6 +78,7 @@ class Simulation:
         self.wave_index = 0
         self.next_wave_at = FIRST_WAVE_TIME
         self.first_blood = False
+        self.minion_warned = False
         self.winner = None
         self.score = {BLUE: 0, RED: 0}
         self.rng = random.Random()
@@ -483,6 +486,10 @@ class Simulation:
         recent = {cid: t for cid, t in victim.damage_log.items() if self.time - t <= ASSIST_WINDOW}
         victim.damage_log = {}
         killer_champ = killer if isinstance(killer, Champion) else None
+        credited = killer_champ is not None                      # 챔피언 손에 죽었는가 (아니면 포탑·미니언에게 처형)
+        shutdown = victim.kill_streak >= 3                       # 연속 처치 중이던 상대를 끊었는가
+        victim.kill_streak = 0
+        victim.multi_n = 0
         if killer_champ is None and recent:
             # 포탑·미니언에게 처치되면 마지막으로 피해를 준 챔피언이 처치 관여
             killer_champ = self.champions.get(max(recent, key=recent.get))
@@ -493,11 +500,19 @@ class Simulation:
                    if killer_champ is None or cid != killer_champ.id]
         assists = [a for a in assists if a.team != victim.team]
 
+        multi = streak = 0
+        fb = False
         if killer_champ is not None:
             killer_champ.kills += 1
+            killer_champ.kill_streak += 1
+            streak = killer_champ.kill_streak
+            killer_champ.multi_n = killer_champ.multi_n + 1 if self.time - killer_champ.multi_t <= MULTIKILL_WINDOW else 1
+            killer_champ.multi_t = self.time
+            multi = killer_champ.multi_n
             gold = KILL_GOLD
             if not self.first_blood:
                 self.first_blood = True
+                fb = True
                 gold += FIRST_BLOOD_BONUS
                 self.event(e="announce", text=f"{killer_champ.name} 님이 선취점을 올렸습니다!")
             killer_champ.gold += gold
@@ -515,7 +530,8 @@ class Simulation:
 
         self.event(e="kill", k=killer_champ.id if killer_champ else (killer.id if killer else 0),
                    kn=killer_champ.name if killer_champ else ("포탑" if isinstance(killer, Structure) else "미니언"),
-                   kt=other(victim.team), v=victim.id, vn=victim.name, vt=victim.team)
+                   kt=other(victim.team), v=victim.id, vn=victim.name, vt=victim.team,
+                   mk=multi, ks=streak, sd=shutdown, fb=fb, ke=credited)         # 아나운서가 고르는 데 쓰는 값
 
     def structure_destroyed(self, s, killer):
         s.alive = False
@@ -532,6 +548,9 @@ class Simulation:
                 if c.team == enemy:
                     c.gold += 50
         self.event(e="announce", text=f"{'블루' if s.team == BLUE else '레드'}팀 {names[s.skind]} 파괴되었습니다!")
+        if s.skind in ("turret", "inhibitor"):
+            self.event(e="vo", key="turret_down" if s.skind == "turret" else "inhib_down", tm=s.team)
+        s.soon_sent = False
         if s.skind == "nexus":
             self.winner = enemy
             self.event(e="victory", team=enemy)
@@ -913,7 +932,12 @@ class Simulation:
         self.help_calls = [h for h in self.help_calls if h[0] > t]
         self.run_scheduled()
 
+        if not self.minion_warned and t >= FIRST_WAVE_TIME - 30.0:
+            self.minion_warned = True
+            self.event(e="vo", key="minions_30")
         if t >= self.next_wave_at:
+            if self.wave_index == 0:
+                self.event(e="vo", key="minions_spawned")
             self.spawn_wave()
             self.wave_index += 1
             self.next_wave_at += WAVE_INTERVAL
@@ -1377,6 +1401,10 @@ class Simulation:
     def update_structure(self, s, dt):
         t = self.time
         if not s.alive:
+            if (s.skind == "inhibitor" and s.respawn_at is not None and not getattr(s, "soon_sent", False)
+                    and s.respawn_at - t <= INHIBITOR_SOON):
+                s.soon_sent = True
+                self.event(e="vo", key="inhib_soon", tm=s.team)
             if s.skind == "inhibitor" and s.respawn_at is not None and t >= s.respawn_at:
                 s.alive = True
                 s.hp = s.max_hp

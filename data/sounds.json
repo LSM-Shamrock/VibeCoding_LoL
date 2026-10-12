@@ -212,46 +212,6 @@
    "pitch": 0.08,
    "gap": 0.1
   },
-  "vo_start": {
-   "files": [
-    "voice/fight.ogg"
-   ],
-   "vol": 0.85,
-   "gap": 1.0,
-   "pri": 1
-  },
-  "vo_firstblood": {
-   "files": [
-    "voice/combo.ogg"
-   ],
-   "vol": 0.85,
-   "gap": 1.0,
-   "pri": 1
-  },
-  "vo_multikill": {
-   "files": [
-    "voice/multi_kill.ogg"
-   ],
-   "vol": 0.85,
-   "gap": 1.0,
-   "pri": 1
-  },
-  "vo_win": {
-   "files": [
-    "voice/you_win.ogg"
-   ],
-   "vol": 0.9,
-   "gap": 1.0,
-   "pri": 1
-  },
-  "vo_lose": {
-   "files": [
-    "voice/you_lose.ogg"
-   ],
-   "vol": 0.9,
-   "gap": 1.0,
-   "pri": 1
-  },
   "vo_select": {
    "files": [
     "voice/choose_your_character.ogg"
@@ -1023,6 +983,294 @@
    ],
    "vol": 0.75,
    "gap": 1.2
+  },
+  "vo_double": {
+   "files": [
+    "announcer/double.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_triple": {
+   "files": [
+    "announcer/triple.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_quadra": {
+   "files": [
+    "announcer/quadra.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_penta": {
+   "files": [
+    "announcer/penta.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_e_double": {
+   "files": [
+    "announcer/e_double.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_e_triple": {
+   "files": [
+    "announcer/e_triple.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_e_quadra": {
+   "files": [
+    "announcer/e_quadra.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_e_penta": {
+   "files": [
+    "announcer/e_penta.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_spree": {
+   "files": [
+    "announcer/spree.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_rampage": {
+   "files": [
+    "announcer/rampage.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_unstoppable": {
+   "files": [
+    "announcer/unstoppable.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_dominating": {
+   "files": [
+    "announcer/dominating.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_legendary_kill": {
+   "files": [
+    "announcer/legendary_kill.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_legend_arrives": {
+   "files": [
+    "announcer/legend_arrives.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_e_spree": {
+   "files": [
+    "announcer/e_spree.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_e_dominating": {
+   "files": [
+    "announcer/e_dominating.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_e_unstoppable": {
+   "files": [
+    "announcer/e_unstoppable.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_e_godlike": {
+   "files": [
+    "announcer/e_godlike.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_e_legendary": {
+   "files": [
+    "announcer/e_legendary.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_e_legendary_kill": {
+   "files": [
+    "announcer/e_legendary_kill.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_first_blood": {
+   "files": [
+    "announcer/first_blood.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_shutdown": {
+   "files": [
+    "announcer/shutdown.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_slain_enemy": {
+   "files": [
+    "announcer/slain_enemy.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_ally_slain": {
+   "files": [
+    "announcer/ally_slain.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_you_slain": {
+   "files": [
+    "announcer/you_slain.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_you_executed": {
+   "files": [
+    "announcer/you_executed.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_turret_destroyed": {
+   "files": [
+    "announcer/turret_destroyed.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_inhib_lost": {
+   "files": [
+    "announcer/inhib_lost.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_inhib_destroyed": {
+   "files": [
+    "announcer/inhib_destroyed.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_inhib_respawn_soon": {
+   "files": [
+    "announcer/inhib_respawn_soon.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_e_inhib_respawn_soon": {
+   "files": [
+    "announcer/e_inhib_respawn_soon.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_welcome": {
+   "files": [
+    "announcer/welcome.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_minions_30": {
+   "files": [
+    "announcer/minions_30.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_minions_spawned": {
+   "files": [
+    "announcer/minions_spawned.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_victory": {
+   "files": [
+    "announcer/victory.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
+  },
+  "vo_defeat": {
+   "files": [
+    "announcer/defeat.ogg"
+   ],
+   "vol": 0.95,
+   "gap": 0.0,
+   "pri": 1
   }
  },
  "attack": {
