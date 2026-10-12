@@ -24,7 +24,7 @@ from ..shared.constants import (
     INVENTORY_SLOTS, KILL_GOLD, MARK_COOLDOWN, MARK_DASH_SPEED, MARK_RANGE, MARK_RECAST_TIME,
     MARK_SPEED, MAX_LEVEL, PASSIVE_GOLD_PER_SEC, PASSIVE_XP_PER_SEC, PLATE_SHARE_RANGE, RECALL_TIME, RED,
     RELIC_FIRST_SPAWN, RELIC_HEAL_PCT, RELIC_RADIUS, RELIC_RESPAWN, SELL_RATIO, SIGHT, WAVE_INTERVAL, XP_SHARE_RANGE,
-    death_timer, xp_to_next, SPEED_PAD_BONUS, SPEED_PAD_END, SPEED_PAD_LINGER, SPEED_PAD_START,
+    death_timer, xp_to_next,
 )
 from ..shared.spells import SPELLS
 from . import abilities
@@ -751,22 +751,6 @@ class Simulation:
                 best, best_d = e, d
         return best
 
-    def tick_speed_pad(self, c):
-        """집 쪽에서 앞쪽으로 빠르게 나가는 가속 구간: 아군 진영의 이 구간에서 앞(맵 중앙)으로 걸어 나가는 동안만 이동 속도가 크게 오른다."""
-        px = getattr(c, "_pad_x", None)
-        c._pad_x = c.x
-        if px is None:
-            return
-        u = -c.x * mapdata.team_dir(c.team)                 # 아군 진영 안쪽 깊이 (중앙 0, 우물 방향 +)
-        moving_out = (c.x - px) * mapdata.team_dir(c.team) > 0.002 and abs(c.x - px) < 1.5
-        for b in c.buffs:
-            if b.get("pad"):
-                if moving_out and SPEED_PAD_START >= u >= SPEED_PAD_END:
-                    b["until"] = self.time + SPEED_PAD_LINGER
-                return
-        if moving_out and SPEED_PAD_START >= u >= SPEED_PAD_END:
-            c.buffs.append({"until": self.time + SPEED_PAD_LINGER, "move_speed_pct": SPEED_PAD_BONUS, "pad": True})
-
     def add_speed_buff(self, u, pct, duration):
         u.buffs.append({"until": self.time + duration, "move_speed_pct": pct})
         u.recompute_stats(self.time)
@@ -1052,7 +1036,6 @@ class Simulation:
             return
         c.gold += PASSIVE_GOLD_PER_SEC * dt
         self.give_xp(c, PASSIVE_XP_PER_SEC * dt)
-        self.tick_speed_pad(c)
         c.recompute_stats(t)
         c.hp = min(c.max_hp, c.hp + c.stats["hp_regen"] / 5.0 * dt)
         c.mana = min(c.max_mana, c.mana + c.stats["mana_regen"] / 5.0 * dt)

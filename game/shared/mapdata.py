@@ -7,13 +7,13 @@ import math
 
 from .constants import BLUE, RED
 
-LANE_END = 57.0          # 맵 끝 (x 절댓값) — 우물 원과 기둥 뒤까지 바닥이 이어지게
+LANE_END = 69.0          # 맵 끝 (x 절댓값) — 우물 원과 기둥 뒤까지 바닥이 이어지게
 LANE_HALF_WIDTH = 7.5    # 라인 구간 절반 폭
 BASE_HALF_WIDTH = 11.5   # 본진 구간 절반 폭
-BASE_START = 28.0        # |x| 가 이 이상이면 본진 구간으로 넓어짐
+BASE_START = 40.0        # |x| 가 이 이상이면 본진 구간으로 넓어짐
 BASE_BLEND = 6.0
 
-FOUNTAIN_X = 50.0
+FOUNTAIN_X = 62.0
 PILLAR_RING = 6.6        # 우물 제단 기둥이 놓인 반지름
 PILLAR_RADIUS = 0.45     # 기둥 충돌 반지름 (포탑처럼 길을 막는다)
 
@@ -58,11 +58,12 @@ def clamp_to_map(x, z, radius=0.0):
 # 구조물: (key, kind, x(블루 기준, 음수), z, max_hp, radius, 선행조건 key 목록)
 # 선행조건 구조물이 모두 파괴되어야 피해를 받을 수 있다.
 _STRUCTURE_LAYOUT = [
-    ("inner", "turret", -21.4, 0.0, 3600, 1.1, []),
-    ("inhib", "inhibitor", -28.4, 0.0, 4000, 1.6, ["inner"]),
-    ("nexus_t1", "turret", -35.0, -2.6, 2700, 1.0, ["inhib"]),
-    ("nexus_t2", "turret", -35.0, 2.6, 2700, 1.0, ["inhib"]),
-    ("nexus", "nexus", -39.0, 0.0, 5500, 2.4, ["nexus_t1", "nexus_t2"]),
+    ("outer", "turret", -22.0, 0.0, 4000, 1.1, []),
+    ("inner", "turret", -33.4, 0.0, 3600, 1.1, ["outer"]),
+    ("inhib", "inhibitor", -40.4, 0.0, 4000, 1.6, ["inner"]),
+    ("nexus_t1", "turret", -47.0, -2.6, 2700, 1.0, ["inhib"]),
+    ("nexus_t2", "turret", -47.0, 2.6, 2700, 1.0, ["inhib"]),
+    ("nexus", "nexus", -51.0, 0.0, 5500, 2.4, ["nexus_t1", "nexus_t2"]),
 ]
 
 
@@ -79,14 +80,15 @@ def structure_layout():
     return out
 
 
-RELIC_POSITIONS = [(-24.0, 5.0), (-12.0, -5.0), (12.0, 5.0), (24.0, -5.0)]
+RELIC_POSITIONS = [(-27.0, 5.0), (-13.0, -5.0), (13.0, 5.0), (27.0, -5.0)]
 
 TURRET_RANGE = 7.75
 
 # 부쉬(수풀): (x, z, 반지름 x, 반지름 z) 타원. 안에 있는 유닛은 같은 부쉬 안에 있는 적에게만 보인다.
 BUSHES = [
     (-6.0, 5.6, 3.0, 1.9), (6.0, -5.6, 3.0, 1.9),
-    (-17.0, -5.6, 3.0, 1.9), (17.0, 5.6, 3.0, 1.9),
+    (-18.0, -5.6, 3.0, 1.9), (18.0, 5.6, 3.0, 1.9),
+    (-30.0, -5.6, 3.0, 1.9), (30.0, 5.6, 3.0, 1.9),
 ]
 
 
@@ -99,7 +101,7 @@ def bush_at(x, z):
 
 
 # 시야 격자 (클라이언트 전장의 안개 표시용): 맵을 덮는 범위와 칸 크기
-VIS_X0, VIS_X1 = -58.0, 58.0
+VIS_X0, VIS_X1 = -70.0, 70.0
 VIS_Z0, VIS_Z1 = -13.0, 13.0
 VIS_CELL = 0.25
 
@@ -114,4 +116,4 @@ def spawn_points(team, count):
 
 
 def minion_spawn(team):
-    return (-33.5 if team == BLUE else 33.5, 0.0)
+    return (-45.5 if team == BLUE else 45.5, 0.0)

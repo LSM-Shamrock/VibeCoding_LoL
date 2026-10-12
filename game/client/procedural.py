@@ -362,7 +362,7 @@ def build_map():
         b.quad((sx * end, 0, -hw), (sx * end, 0, hw), (sx * end, -depth, hw), (sx * end, -depth, -hw), HULL)
 
     # 가장자리 신전 기둥 (불 켠 화로) — 가끔은 무너져 있다
-    for k in range(-5, 6):
+    for k in range(-6, 7):
         px = k * 10.0
         for side in (-1, 1):
             hw = mapdata.half_width(px)
@@ -370,7 +370,7 @@ def build_map():
             _column(b, px, pz, 2.7, rng, ruined=rng.random() < 0.25, r=0.38)
 
     # 플랫폼 아래: 매달린 바위 기둥 (흙과 뿌리)
-    for k in range(-10, 11):
+    for k in range(-11, 12):
         px = k * 5.5 + rng.uniform(-1, 1)
         hw = mapdata.half_width(px)
         w = rng.uniform(1.5, 3.0)

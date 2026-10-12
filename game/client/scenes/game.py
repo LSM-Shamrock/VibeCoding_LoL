@@ -24,7 +24,7 @@ from ...shared import mapdata
 from ...shared.spells import DEFAULT_SPELLS, SPELLS
 from ...shared.constants import (
     BLUE, FLASH_COOLDOWN, FLASH_RANGE, INVENTORY_SLOTS, MARK_COOLDOWN, MARK_RANGE, MARK_RECAST_TIME, RECALL_TIME, RED,
-    SELL_RATIO, SIGHT, SPEED_PAD_END, SPEED_PAD_START,
+    SELL_RATIO, SIGHT,
 )
 from .. import ui
 from ..app import HEIGHT, WIDTH, Scene
@@ -76,7 +76,7 @@ HOVER_RADIUS = {"champion": 58, "minion": 38}
 HUD_RECT = pygame.Rect(300, 606, 680, 108)
 MM_BG = (14, 11, 8, 240)                # 미니맵 바탕: 길 바깥쪽과 같은 어두운 색
 MM_PAD = 2                              # 미니맵 좌우 여백 (px)
-MINIMAP_X = 58.0                        # 미니맵이 덮는 x 범위 (±)
+MINIMAP_X = 70.0                        # 미니맵이 덮는 x 범위 (±)
 INV_COLS = 4                            # 인벤토리 4칸 x 2줄
 CHAT_X, CHAT_Y, CHAT_W = 12, 572, 440     # 채팅 입력칸 (왼쪽 아래, 로그는 그 위로 쌓임)
 CHAT_FONT, CHAT_LINE = 16, 22              # 채팅 글자 크기, 줄 간격
@@ -1515,7 +1515,7 @@ class GameScene(Scene):
             if keys[pygame.K_DOWN]:
                 ey = 1
             speed = 32.0 * dt * (cam.distance / 22.0)
-            cam.tx = max(-58, min(58, cam.tx + ex * speed))
+            cam.tx = max(-70, min(70, cam.tx + ex * speed))
             cam.tz = max(-15, min(15, cam.tz + ey * speed))
 
         self.audio.listener = (cam.tx, cam.tz)
@@ -1551,23 +1551,6 @@ class GameScene(Scene):
             fx, fz = mapdata.fountain_pos(team)
             col = (0.3, 0.6, 1.0) if team == BLUE else (1.0, 0.35, 0.3)
             r.draw_transparent(m.ring_thin, model_matrix(fx, 0.06, fz, scale=7.5), (*col, 0.5))
-
-        # 가속 구간 화살표: 우물에서 앞길로 이어지는 V 자 무늬가 앞쪽으로 흘러간다
-        for team in (BLUE, RED):
-            col = (0.3, 0.75, 1.0) if team == BLUE else (1.0, 0.45, 0.35)
-            fw = mapdata.team_dir(team)
-            n_ar = 7
-            step = (SPEED_PAD_START - SPEED_PAD_END - 2.0) / (n_ar - 1)
-            for i in range(n_ar):
-                u = SPEED_PAD_START - 1.0 - i * step
-                glow = max(0.0, math.sin(t * 5.0 - i * 0.9))
-                tx = -u * fw + fw * 0.7
-                for zc in (-5.0, 5.0):                    # 가운데 구조물 양옆 두 줄
-                    for sgn in (-1, 1):
-                        ax, az = -fw * math.cos(0.6), sgn * math.sin(0.6)
-                        ang = math.atan2(ax, az)
-                        r.draw_transparent(self.quad, model_matrix(tx, 0.058, zc, rot_y=ang, sx=0.42, sy=1, sz=1.9),
-                                           (*col, 0.06 + 0.12 * glow))
 
         hov_id = self.hover[1] if self.hover else None
 

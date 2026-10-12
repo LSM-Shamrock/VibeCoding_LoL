@@ -102,10 +102,4 @@ def xp_to_next(level):
 def death_timer(level):
     return 4.0 + level * 1.6
 
-# 가속 구간 (칼바람 나락 우물 앞길): 아군 진영 안, 중앙에서 SPEED_PAD_END ~ SPEED_PAD_START 떨어진 구간에서 앞으로 걸어 나갈 때
-SPEED_PAD_START = 47.0
-SPEED_PAD_END = 26.0
-SPEED_PAD_BONUS = 0.8       # 이동 속도 +80%
-SPEED_PAD_LINGER = 0.5      # 구간을 벗어나도 잠깐 유지
-
 DISCOVERY_PORT = 5556       # 같은 네트워크의 열린 방을 알리는 UDP 방송 포트 (호스트 → 로비 화면)
