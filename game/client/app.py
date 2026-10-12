@@ -46,6 +46,9 @@ class Scene:
     def on_enter(self):
         pass
 
+    def on_exit(self):
+        pass
+
     def handle_event(self, e):
         pass
 
@@ -120,6 +123,8 @@ class App:
 
     # ------------------------------------------------------------------ 장면
     def set_scene(self, scene):
+        if self.scene is not None:
+            self.scene.on_exit()
         self.scene = scene
         self.renderer.vision = None     # 전장의 안개는 인게임 장면에서만
         self.set_fullscreen(scene.fullscreen)
@@ -186,13 +191,18 @@ class App:
                 self.server = srv
                 self.hosting = True
             except OSError:
-                self.toast(f"포트 {port} 는 이미 사용 중이라 그 서버에 접속합니다. (이 PC 의 다른 게임 서버라면 로비로 갑니다)")
+                self.toast(f"포트 {port} 는 이미 사용 중이라 그 서버에 접속합니다. ")
         else:
             self.hosting = True
         if not self.connect("127.0.0.1", port, name):
             self.hosting = False
             return False
         return True
+
+    def drop_connection(self):
+        """서버와의 연결을 끊는다 ('연결 끊김' 안내가 뜨지 않게 새 연결 객체로 교체)."""
+        self.net.close()
+        self.net = NetClient()
 
     def stop_hosting(self):
         """내가 연 서버를 닫는다 (방장이 방을 나가거나 포트를 바꿔 다시 열 때)."""
@@ -244,10 +254,9 @@ class App:
 
     def process_messages(self):
         from .scenes.game import GameScene
-        from .scenes.lobby import LobbyScene
+        from .scenes.browse import BrowseScene
         from .scenes.room import RoomScene
         from .scenes.select import SelectScene
-        from .scenes.title import TitleScene
 
         for msg in self.net.poll():
             t = msg.get("t")
@@ -268,9 +277,12 @@ class App:
                     if open_rooms:
                         self.joining = True
                         self.send({"t": "join_room", "id": open_rooms[0]["id"]})
+                    elif not self.rooms:                 # 전용 서버에 방이 하나도 없으면 내가 방을 만든다
+                        self.send({"t": "create_room", "name": f"{self.my_name}의 방"})
                     else:
                         self.toast("들어갈 수 있는 방이 없습니다. (게임이 이미 진행 중이거나 방이 가득 찼습니다)")
-                        self.set_scene(LobbyScene(self))
+                        self.drop_connection()
+                        self.set_scene(BrowseScene(self))
             elif t == "room":
                 self.room = msg
                 self.joining = False
@@ -284,9 +296,10 @@ class App:
             elif t == "error":
                 self.audio.play("ui_error")
                 self.toast(msg.get("msg", "오류"))
-                if self.joining:                     # 바로 접속하던 방에 못 들어가면 로비에서 직접 고른다
+                if self.joining:                     # 바로 접속하던 방에 못 들어가면 로비로 돌아간다
                     self.joining = False
-                    self.set_scene(LobbyScene(self))
+                    self.drop_connection()
+                    self.set_scene(BrowseScene(self))
             elif t == "chat":
                 self.audio.play("ui_chat")
                 self.chat.append((time.time(), msg["name"], msg["text"]))
@@ -295,7 +308,7 @@ class App:
                 self.room = None
                 self.audio.play("ui_error")
                 self.toast("서버와 연결이 끊어졌습니다.")
-                self.set_scene(TitleScene(self))
+                self.set_scene(BrowseScene(self))
             if self.scene is not None:
                 self.scene.on_message(msg)
 

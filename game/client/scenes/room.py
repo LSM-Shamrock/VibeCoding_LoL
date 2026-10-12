@@ -27,15 +27,13 @@ class RoomScene(Scene):
         self.app.send({"t": "start_game"})
 
     def leave(self):
-        from .lobby import LobbyScene
-        from .title import TitleScene
+        from .browse import BrowseScene
         if self.app.hosting:
-            # 방장 겸 서버가 방을 나가면 서버도 닫고 처음 화면으로 (로비가 없는 구조)
-            self.app.stop_hosting()
-            self.app.set_scene(TitleScene(self.app))
-            return
-        self.app.send({"t": "leave_room"})
-        self.app.set_scene(LobbyScene(self.app))
+            self.app.stop_hosting()                  # 방장 겸 서버가 방을 나가면 서버도 닫는다
+        else:
+            self.app.send({"t": "leave_room"})
+            self.app.drop_connection()
+        self.app.set_scene(BrowseScene(self.app))
 
     def _build_slot_buttons(self):
         """방 상태에 따라 슬롯별 버튼(봇 추가/제거, 팀 이동)을 만든다."""

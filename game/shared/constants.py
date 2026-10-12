@@ -106,3 +106,5 @@ SPEED_PAD_START = 47.0
 SPEED_PAD_END = 26.0
 SPEED_PAD_BONUS = 0.8       # 이동 속도 +80%
 SPEED_PAD_LINGER = 0.5      # 구간을 벗어나도 잠깐 유지
+
+DISCOVERY_PORT = 5556       # 같은 네트워크의 열린 방을 알리는 UDP 방송 포트 (호스트 → 로비 화면)

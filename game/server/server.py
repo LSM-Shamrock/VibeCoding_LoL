@@ -4,13 +4,14 @@
 server.py 로 전용 서버만 따로 실행할 수도 있다.
 """
 import itertools
+import json
 import random
 import socket
 import threading
 import time
 
 from ..shared import data as gamedata
-from ..shared.constants import BLUE, DEFAULT_PORT, MAX_TEAM_SIZE, RED, SELECT_TIME, SNAPSHOT_EVERY, TICK_RATE
+from ..shared.constants import BLUE, DEFAULT_PORT, DISCOVERY_PORT, MAX_TEAM_SIZE, RED, SELECT_TIME, SNAPSHOT_EVERY, TICK_RATE
 from ..shared.net import Connection, encode
 from ..shared.spells import DEFAULT_SPELLS, SPELL_ORDER, valid_pair
 from .sim import Simulation
@@ -106,7 +107,37 @@ class GameServer:
         self.running = True
         threading.Thread(target=self._accept_loop, daemon=True).start()
         threading.Thread(target=self._game_loop, daemon=True).start()
+        threading.Thread(target=self._beacon_loop, daemon=True).start()
         self.log(f"{self.host}:{self.port} 에서 대기 중")
+
+    def _beacon_loop(self):
+        """열린 방을 같은 네트워크에 1초마다 UDP 방송으로 알린다 (클라이언트 로비의 방 목록용). 방이 없으면 조용히 있는다."""
+        try:
+            udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            udp.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        except OSError:
+            return
+        targets = [("255.255.255.255", DISCOVERY_PORT)]
+        try:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            probe.connect(("8.8.8.8", 80))
+            a, b, c, _d = probe.getsockname()[0].split(".")
+            probe.close()
+            targets += [(f"{a}.{b}.{c}.255", DISCOVERY_PORT), (f"{a}.{b}.255.255", DISCOVERY_PORT)]
+        except (OSError, ValueError):
+            pass
+        while self.running:
+            with self.lock:
+                rooms = [r.summary() for r in self.rooms.values()]
+            if rooms:
+                data = json.dumps({"g": "kalbaram", "port": self.sock.getsockname()[1], "rooms": rooms}).encode("utf-8")
+                for t in targets:
+                    try:
+                        udp.sendto(data, t)
+                    except OSError:
+                        pass
+            time.sleep(1.0)
+        udp.close()
 
     def stop(self):
         self.running = False
