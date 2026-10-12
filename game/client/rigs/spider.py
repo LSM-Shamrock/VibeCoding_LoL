@@ -23,7 +23,7 @@ from ..gl import Mesh, facing_to_rot
 PI = math.pi
 SC = 0.28                       # 보스 단위 -> 이 게임 단위
 THORAX_R = 1.7
-LEAP_PEAK = 15.0                # 점프 최고 높이 (보스 단위, 월드 약 4.2)
+LEAP_PEAK = 26.0                # 점프 최고 높이 (보스 단위, 월드 약 7.3)
 
 IDLE = {'height': 2.3, 'pitch': 0, 'abdomen': 0.14, 'stance': 1, 'frontRaise': 0, 'squash': 1,
         'tremble': 0, 'legFollow': 0, 'abdPulse': 0}

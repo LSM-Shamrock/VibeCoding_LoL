@@ -114,7 +114,8 @@ def _seg_dist(px, py, a, b):
 
 
 # 스킬 상세 설명 (Shift): (데이터 키, 이름, 표시 형식). 값이 리스트면 스킬 레벨별 값, 아니면 고정 값으로 보여준다.
-RANK_STATS = [("cooldown", "재사용 대기시간", "{:g}초"), ("mana", "마나 소모", "{:g}"), ("damage", "피해량", "{:g}"),
+RANK_STATS = [("cooldown", "재사용 대기시간", "{:g}초"), ("mana", "마나 소모", "{:g}"), ("damage", "피해량", "{:g}"), ("damage_per_sec", "초당 피해량", "{:g}"),
+              ("cone_damage", "부채꼴 피해량", "{:g}"), ("path_damage", "지나는 길 피해량", "{:g}"),
               ("heal", "회복량", "{:g}"), ("heal_per_sec", "초당 회복량", "{:g}"), ("shield", "보호막", "{:g}"),
               ("burst_damage", "보호막 파괴 시 피해", "{:g}"), ("attack_speed_pct", "공격 속도", "+{:.0%}"),
               ("move_speed_pct", "이동 속도", "+{:.0%}"), ("pct", "생명력 흡수", "{:.0%}"),
@@ -122,7 +123,8 @@ RANK_STATS = [("cooldown", "재사용 대기시간", "{:g}초"), ("mana", "마�
               ("armor_per_mark", "표식당 방어력", "+{:g}"), ("airborne", "공중에 띄움", "{:g}초"),
               ("wall_stun", "벽 충돌 기절", "{:g}초"), ("duration", "지속 시간", "{:g}초"),
               ("baby_ad", "새끼 거미 평타 피해", "{:g}"), ("baby_hp", "새끼 거미 체력", "{:g}"), ("cocoon_hp", "고치 체력", "{:g}")]
-FLAT_STATS = [("ad_ratio", "공격력 계수", "{:.0%}"), ("bonus_ad_ratio", "추가 공격력 계수", "{:.0%}"),
+FLAT_STATS = [("ad_ratio", "공격력 계수", "{:.0%}"), ("damage_per_sec_ad", "초당 피해 공격력 계수", "{:.0%}"),
+              ("cone_damage_ad", "부채꼴 피해 공격력 계수", "{:.0%}"), ("path_damage_ad", "지나는 길 피해 공격력 계수", "{:.0%}"), ("bonus_ad_ratio", "추가 공격력 계수", "{:.0%}"),
               ("ap_ratio", "주문력 계수", "{:.0%}"), ("baby_ad_ratio", "새끼 거미 공격력 계수", "{:.0%}"), ("empower_ap_ratio", "강화 공격 주문력 계수", "{:.0%}"),
               ("empower_damage_ad", "강화 공격 공격력 계수", "{:.0%}"), ("heal_ap", "회복 주문력 계수", "{:.0%}"),
               ("heal_per_sec_ap", "초당 회복 주문력 계수", "{:.0%}"), ("shield_ap", "보호막 주문력 계수", "{:.0%}"),
@@ -141,6 +143,41 @@ FLAT_STATS = [("ad_ratio", "공격력 계수", "{:.0%}"), ("bonus_ad_ratio", "�
               ("undying", "불사 시간", "{:g}초"), ("mark_duration", "표식 지속", "{:g}초"),
               ("empower_duration", "강화 지속 시간", "{:g}초"), ("delay", "발동 지연", "{:g}초")]
 DAMAGE_TYPES = {"physical": "물리", "magic": "마법", "true": "고정"}
+DAMAGE_TAGS = {"physical": "AD", "magic": "AP", "true": "고정"}
+# 피해량 행: 데이터 키 -> 피해 유형을 정하는 방법 (없으면 스킬의 damage_type)
+DAMAGE_KEYS = {"damage", "damage_per_sec", "cone_damage", "path_damage", "burst_damage", "empower_magic", "empower_damage", "baby_ad"}
+
+
+TAG_COLORS = {"AD": (240, 150, 70), "AP": (175, 130, 255), "고정": (235, 235, 235)}
+
+
+def draw_detail_label(surf, label, pos, size=13, color=None):
+    """상세 값 행의 이름. 끝의 (AD) / (AP) 는 색을 달리해 그린다."""
+    color = color or ui.TEXT_DIM
+    for tag, tc in TAG_COLORS.items():
+        suffix = f" ({tag})"
+        if label.endswith(suffix):
+            x = ui.text(surf, label[: -len(suffix)] + " ", pos, size, color).right
+            return ui.text(surf, tag, (x, pos[1]), size, tc, bold=True)
+    return ui.text(surf, label, pos, size, color)
+
+
+def detail_value_x(details, size=13, min_x=140):
+    """상세 값 열의 시작 위치 (가장 긴 이름 뒤)."""
+    return max([min_x] + [ui.font(size).size(label)[0] + 16 for label, _ in details])
+
+
+def damage_tag(ab, key):
+    """피해량 행에 붙일 AD / AP 표시."""
+    if key == "empower_magic":
+        dtype = "magic"
+    elif key == "empower_damage":
+        dtype = ab.get("empower_damage_type", "physical")
+    elif key == "baby_ad":
+        dtype = "physical"
+    else:
+        dtype = ab.get("damage_type", "physical")
+    return DAMAGE_TAGS.get(dtype, dtype)
 
 
 _PORTRAITS = {}
@@ -233,13 +270,13 @@ def ability_details(ab):
 
     def add(key, label, fmt):
         v = ab[key]
+        if key in DAMAGE_KEYS:
+            label = f"{label} ({damage_tag(ab, key)})"
         rows.append((label, [_fmt_stat(fmt, x) for x in v] if isinstance(v, (list, tuple)) else _fmt_stat(fmt, v)))
 
     for key, label, fmt in RANK_STATS:
         if key in ab and key != "duration":
             add(key, label, fmt)
-    if "damage_type" in ab:
-        rows.append(("피해 유형", DAMAGE_TYPES.get(ab["damage_type"], ab["damage_type"])))
     if "duration" in ab:
         add("duration", "지속 시간", "{:g}초")
     for key, label, fmt in FLAT_STATS:
@@ -487,6 +524,14 @@ class GameScene(Scene):
     def me(self):
         e = self.champs.get(self.my_id)
         return e.d if e else None
+
+    def seen_bushes(self):
+        """우리 팀 시야 제공자가 들어가 있어 안이 보이는 부쉬 번호들."""
+        pts = [(e.x, e.z) for cid, e in self.champs.items()
+               if self.champ_info[cid]["tm"] == self.my_team and e.d and not e.d["dead"]]
+        pts += [(e.x, e.z) for e in self.minions.values() if e.d[2] == self.my_team]
+        pts += [(row[2], row[3]) for row, _ in self.anchors if row[1] == self.my_team and len(row) > 6 and row[6] == 1]
+        return {b for b in (mapdata.bush_at(x, z) for x, z in pts) if b >= 0}
 
     def view_team(self, team):
         """화면에 보일 팀 색: 내 팀은 어느 쪽이든 항상 파랑, 상대 팀은 빨강."""
@@ -1580,11 +1625,10 @@ class GameScene(Scene):
 
         hov_id = self.hover[1] if self.hover else None
 
-        # 부쉬: 내 챔피언이 들어가 있는 부쉬는 반투명
-        me = self.champs.get(self.my_id)
-        my_bush = mapdata.bush_at(me.x, me.z) if me and me.d and not me.d["dead"] else -1
+        # 부쉬: 우리 팀이 안을 보고 있는 부쉬(아군 챔피언·미니언·새끼 거미·고치가 들어가 있음)는 반투명
+        seen_bushes = self.seen_bushes()
         for i, (bx, bz, rx, rz) in enumerate(mapdata.BUSHES):
-            if i == my_bush:
+            if i in seen_bushes:
                 r.draw_transparent(self.bush_meshes[i], model_matrix(bx, 0, bz), (1, 1, 1, 0.45), unlit=0.0)
             else:
                 r.draw(self.bush_meshes[i], model_matrix(bx, 0, bz))
@@ -2670,7 +2714,8 @@ class GameScene(Scene):
             title_w = sum(ui.font(14, True).size(t)[0] for t, _ in title)
         else:
             title_w = ui.font(14, True).size(title)[0]
-        w = (400 if shift else 340) if body else title_w + 20
+        vx = detail_value_x(details) + 10 if details else 150
+        w = (max(400, vx + 250) if shift else 340) if body else title_w + 20
         r = pygame.Rect(0, 0, w, h)
         r.bottomleft = (mouse[0] - 20, 580 if body else mouse[1] - 8)
         r.x = max(4, min(WIDTH - w - 4, r.x))
@@ -2691,16 +2736,16 @@ class GameScene(Scene):
         y += 6
         for label, value in details:
             mana_row = label == "마나 소모"
-            ui.text(surf, label, (r.x + 10, y), 13, MANA_BLUE if mana_row else ui.TEXT_DIM)
+            draw_detail_label(surf, label, (r.x + 10, y), 13, MANA_BLUE if mana_row else ui.TEXT_DIM)
             if isinstance(value, list):
-                x = r.x + 150
+                x = r.x + vx
                 for i, v in enumerate(value):
                     cur = i == rank - 1
                     x = ui.text(surf, v, (x, y), 13, MANA_BLUE if mana_row else (ui.GOLD if cur else ui.TEXT), bold=cur).right
                     if i < len(value) - 1:
                         x = ui.text(surf, " / ", (x, y), 13, ui.TEXT_DIM).right
             else:
-                ui.text(surf, value, (r.x + 150, y), 13, MANA_BLUE if mana_row else ui.TEXT)
+                ui.text(surf, value, (r.x + vx, y), 13, MANA_BLUE if mana_row else ui.TEXT)
             y += 20
 
     # ---- 미니맵

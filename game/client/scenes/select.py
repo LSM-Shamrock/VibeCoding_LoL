@@ -10,7 +10,7 @@ from ...shared.spells import SPELL_ORDER, SPELLS
 from .. import ui
 from ..app import WIDTH, Scene
 from ..gl import model_matrix
-from .game import ability_details, draw_round_portrait, shade
+from .game import ability_details, detail_value_x, draw_detail_label, draw_round_portrait, shade
 
 KEYS = ("Q", "W", "E", "R")
 SKILL_PANEL = pygame.Rect(24, 548, WIDTH - 48, 150)
@@ -396,7 +396,8 @@ class SelectScene(Scene):
             y += 4
             pygame.draw.line(surf, (50, 60, 80), (r.x + pad, y), (r.right - pad, y))
             y += 6
+            vx = detail_value_x(rows)
             for label, value in rows:
-                ui.text(surf, label, (r.x + pad, y), 13, ui.TEXT_DIM, shadow=False)
-                ui.text(surf, value, (r.x + pad + 140, y), 13, ui.TEXT, shadow=False)
+                draw_detail_label(surf, label, (r.x + pad, y), 13)
+                ui.text(surf, value, (r.x + pad + vx, y), 13, ui.TEXT, shadow=False)
                 y += 20
