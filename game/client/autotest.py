@@ -36,12 +36,12 @@ class AutoTest:
                 self.snap("01_title")
             if st > 1.3 and self.once("host"):
                 app.host_and_connect("테스터")
-        if name == "LobbyScene" and self.stage == "title":
+        if name in ("LobbyScene", "RoomScene") and self.stage == "title":      # 호스트 모드는 로비 없이 바로 방
             self.goto("lobby")
         elif self.stage == "lobby":
             if st > 0.6 and self.once("lobby"):
                 self.snap("01b_lobby")
-            if st > 0.8 and self.once("create"):
+            if st > 0.8 and name == "LobbyScene" and self.once("create"):
                 app.send({"t": "create_room", "name": "자동 테스트 방", "size": self.size})
             if name == "RoomScene":
                 self.goto("room")

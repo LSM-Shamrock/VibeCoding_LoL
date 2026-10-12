@@ -28,6 +28,12 @@ class RoomScene(Scene):
 
     def leave(self):
         from .lobby import LobbyScene
+        from .title import TitleScene
+        if self.app.hosting:
+            # 방장 겸 서버가 방을 나가면 서버도 닫고 처음 화면으로 (로비가 없는 구조)
+            self.app.stop_hosting()
+            self.app.set_scene(TitleScene(self.app))
+            return
         self.app.send({"t": "leave_room"})
         self.app.set_scene(LobbyScene(self.app))
 

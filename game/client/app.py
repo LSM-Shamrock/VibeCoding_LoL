@@ -100,6 +100,7 @@ class App:
         ui.set_sfx(self.audio.play)
         self.net = NetClient()
         self.server = None          # 이 프로세스에서 띄운 서버
+        self.hosting = False        # 내가 방장 겸 서버인가 (로비 없이 자동으로 방을 만든다)
         self.my_key = None
         self.my_name = ""
         self.server_addr = ""
@@ -170,20 +171,62 @@ class App:
 
     # ------------------------------------------------------------------ 네트워크
     def host_and_connect(self, name, port=DEFAULT_PORT):
+        """내 PC 에서 서버를 열고 접속한다. 한 호스트당 방 하나라서 접속하면 방을 자동으로 만들어 로비 없이 대기실로 간다."""
         from ..server.server import GameServer
+        if self.server is not None and self.server.port != port:
+            self.stop_hosting()                      # 예전에 연 서버가 다른 포트면 닫고 새 포트로 다시 연다
+        self.hosting = False
         if self.server is None:
             try:
                 srv = GameServer("0.0.0.0", port, verbose=False)
                 srv.start()
                 self.server = srv
+                self.hosting = True
             except OSError:
-                self.toast("이미 이 컴퓨터에서 서버가 실행 중이라 그 서버에 접속합니다.")
-        return self.connect("127.0.0.1", port, name)
+                self.toast(f"포트 {port} 는 이미 사용 중이라 그 서버에 접속합니다. (이 PC 의 다른 게임 서버라면 로비로 갑니다)")
+        else:
+            self.hosting = True
+        if not self.connect("127.0.0.1", port, name):
+            self.hosting = False
+            return False
+        return True
+
+    def stop_hosting(self):
+        """내가 연 서버를 닫는다 (방장이 방을 나가거나 포트를 바꿔 다시 열 때)."""
+        self.hosting = False
+        self.net.close()
+        self.net = NetClient()                       # 닫힘 알림이 '연결 끊김' 안내로 뜨지 않게 새 연결 객체로 교체
+        if self.server is not None:
+            self.server.stop()
+            self.server = None
+        self.room = None
 
     def connect(self, host, port, name):
+        host = host.strip()
+        for prefix in ("tcp://", "http://", "https://"):
+            if host.lower().startswith(prefix):
+                host = host[len(prefix):]
+        host = host.rstrip("/")
+        if host.count(":") == 1:                     # "192.168.0.5:6000" 처럼 주소칸에 포트까지 적은 경우
+            h, _, p = host.partition(":")
+            if p.isdigit():
+                host, port = h, int(p)
+        if not (1 <= int(port) <= 65535):
+            self.toast("포트는 1 ~ 65535 사이 숫자여야 합니다.")
+            return False
+        self.net.close()
+        self.net = NetClient()
         try:
-            self.net = NetClient()
-            self.net.connect(host, port)
+            self.net.connect(host, int(port))
+        except socket.gaierror:
+            self.toast(f"접속 실패: 주소 '{host}' 를 찾을 수 없습니다.")
+            return False
+        except socket.timeout:
+            self.toast(f"접속 실패: {host}:{port} 응답이 없습니다. 주소·포트와 방화벽(TCP {port})을 확인하세요.")
+            return False
+        except ConnectionRefusedError:
+            self.toast(f"접속 실패: {host}:{port} 에서 서버가 열려 있지 않습니다. 호스트가 먼저 '서버 열고 시작'을 눌렀는지, 포트가 같은지 확인하세요.")
+            return False
         except OSError as e:
             self.toast(f"접속 실패: {host}:{port} ({e.strerror or e})")
             return False
@@ -209,7 +252,11 @@ class App:
                 self.my_key = msg["key"]
                 self.my_name = msg["name"]
                 self.audio.play("ui_confirm")
-                self.set_scene(LobbyScene(self))
+                if self.hosting:
+                    # 한 호스트당 방 하나: 로비를 건너뛰고 바로 내 방을 만든다 (곧 대기실 화면으로 넘어간다)
+                    self.send({"t": "create_room", "name": f"{self.my_name}의 방"})
+                else:
+                    self.set_scene(LobbyScene(self))
             elif t == "rooms":
                 self.rooms = msg["rooms"]
             elif t == "room":
