@@ -115,6 +115,11 @@ class KeyBinds:
         self.spells[i] = spell
         self.save()
 
+    def swap_spells(self):
+        """D/F 자리의 주문을 서로 맞바꾼다."""
+        self.spells = [self.spells[1], self.spells[0]]
+        self.save()
+
     def reset(self):
         self.binds = dict(DEFAULTS)
         self.save()

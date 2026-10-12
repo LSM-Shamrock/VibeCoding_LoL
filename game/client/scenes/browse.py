@@ -11,6 +11,8 @@ from .. import ui
 from ..app import HEIGHT, WIDTH, Scene, local_ip
 from ..lan import LanFinder
 
+ADDR_Y = 584                    # 주소·포트 칸 높이 (위의 '주소로 직접 접속 / 포트' 글자와 살짝 띄운다)
+
 PHASE_NAMES = {"waiting": "대기 중", "select": "챔피언 선택", "ingame": "게임 중", "ended": "게임 종료"}
 
 
@@ -30,7 +32,7 @@ class BrowseScene(Scene):
         self.inputs = [self.addr_in, self.port_in]
         self.btn_join = ui.Button((90, 470, 200, 46), "입장", self.join_selected, color=(40, 110, 180))
         self.btn_open = ui.Button((830, 190, 340, 54), "방 열기", self.open_room, color=(40, 110, 180), size=18)
-        self.btn_connect = ui.Button((1040, 574, 130, 40), "접속", self.connect_addr, color=(40, 110, 180))
+        self.btn_connect = ui.Button((1040, ADDR_Y, 130, 40), "방 열기", self.connect_addr, color=(40, 110, 180))
         self.btn_back = ui.Button((1030, 650, 150, 40), "뒤로", self.back, color=(90, 45, 55))
         self.buttons = [self.btn_join, self.btn_open, self.btn_connect, self.btn_back]
         self.layout_addr()
@@ -48,9 +50,10 @@ class BrowseScene(Scene):
     def layout_addr(self):
         pw = 108                                         # 앞부분 칸과 입력칸은 같은 가로 크기
         x = 90
-        self.pre_rect = pygame.Rect(x, 574, pw, 40)
-        self.addr_in.rect = pygame.Rect(x + pw + 4, 574, pw, 40)
-        self.port_in.rect = pygame.Rect(x + 2 * pw + 18, 574, 90, 40)
+        y = ADDR_Y
+        self.pre_rect = pygame.Rect(x, y, pw, 40)
+        self.addr_in.rect = pygame.Rect(x + pw + 4, y, pw, 40)
+        self.port_in.rect = pygame.Rect(x + 2 * pw + 18, y, 90, 40)
 
     def full_addr(self):
         """입력한 값을 접속 주소로 바꾼다. 점이 3개 미만인 숫자 주소는 앞부분을 붙이고, 글자가 섞였거나 이미 전체 주소면 그대로 쓴다."""
@@ -61,6 +64,12 @@ class BrowseScene(Scene):
         if pre and all(ch in "0123456789." for ch in t) and t.count(".") < 3:
             return pre + t.lstrip(".")
         return t
+
+    def fill_addr(self, ip, port):
+        """목록에서 고른 방의 주소를 아래 주소·포트 칸에 넣는다. 앞부분이 같으면 뒷부분만 넣는다."""
+        pre = self.prefix()
+        self.addr_in.value = ip[len(pre):] if pre and ip.startswith(pre) else ip
+        self.port_in.value = str(port)
 
     def addr_error(self, full):
         host = full.split(":")[0]
@@ -80,8 +89,8 @@ class BrowseScene(Scene):
 
     def connect_addr(self):
         addr = self.full_addr()
-        if not addr:
-            self.app.toast("접속할 주소를 입력하세요.")
+        if not addr:                    # 주소를 비워 두면 이 PC 에서 방을 연다
+            self.open_room()
             return
         err = self.addr_error(addr)
         if err:
@@ -124,6 +133,7 @@ class BrowseScene(Scene):
                     elif self.selected != key:
                         self.app.audio.play("ui_select")
                     self.selected = key
+                    self.fill_addr(key[0], key[1])
                     self.last_click = now
 
     def update(self, dt):
@@ -133,6 +143,7 @@ class BrowseScene(Scene):
             self.selected = None
         sel = next((r for r in self.found if (r["ip"], r["port"], r["id"]) == self.selected), None)
         self.btn_join.enabled = bool(sel) and sel["phase"] == "waiting" and sel["count"] < sel["size"] * 2
+        self.btn_connect.label = "접속" if self.addr_in.value.strip() else "방 열기"
         self.layout_addr()
 
     def draw_ui(self, surf):
@@ -175,7 +186,7 @@ class BrowseScene(Scene):
         ui.text(surf, "같은 네트워크 사람들의 목록에 이 방이 보입니다.", (830, 262), 13, ui.TEXT_DIM)
 
         # 직접 접속
-        ui.panel(surf, (70, 550, 1120, 80))
+        ui.panel(surf, (70, 550, 1120, 88))
         ui.text(surf, "주소로 직접 접속 / 포트", (90, 556), 14, ui.TEXT_DIM)
         full = self.full_addr()
         if full:
@@ -191,4 +202,4 @@ class BrowseScene(Scene):
             b.draw(surf)
         if pre:
             ui.text(surf, f"앞의 '{pre}' 는 자동 입력됩니다. 칸을 누르면 자리 수가 바뀌고, 전체 주소를 붙여넣어도 됩니다.",
-                    (90, 640), 13, ui.TEXT_DIM)
+                    (90, 642), 13, ui.TEXT_DIM)

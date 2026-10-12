@@ -7,6 +7,7 @@ import time
 import moderngl
 import pygame
 
+from ..shared import mapdata
 from ..shared.constants import DEFAULT_PORT
 from ..shared.net import NetClient
 from . import ui
@@ -326,10 +327,9 @@ class App:
         self.renderer.draw(self.models.map, model_matrix())
         for team in (0, 1):
             meshes = self.models.team_meshes[team]
-            sign = -1 if team == 0 else 1
-            for x, z, key in ((22, 0, "turret"), (29, 0, "inhibitor"), (35, -2.6, "turret"),
-                              (35, 2.6, "turret"), (39, 0, "nexus")):
-                self.renderer.draw(meshes[key], model_matrix(x * sign, 0, z))
+            for st in mapdata.structure_layout():           # 실제 맵과 같은 자리에 구조물을 놓는다
+                if st["team"] == team:
+                    self.renderer.draw(meshes[st["kind"]], model_matrix(st["x"], 0, st["z"]))
 
     # ------------------------------------------------------------------ 루프
     def run(self):

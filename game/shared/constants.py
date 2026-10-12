@@ -15,6 +15,7 @@ TEAM_NAMES = {BLUE: "블루팀", RED: "레드팀"}
 
 MAX_TEAM_SIZE = 3
 SELECT_TIME = 40.0        # 챔피언 선택 제한 시간 (초)
+FINAL_SELECT_TIME = 5.0   # 모두 확정한 뒤 게임 시작까지 (이 동안 소환사 주문을 바꿀 수 있다)
 
 # ---- 칼바람 규칙 ----
 START_LEVEL = 1

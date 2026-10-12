@@ -11,7 +11,7 @@ import threading
 import time
 
 from ..shared import data as gamedata
-from ..shared.constants import BLUE, DEFAULT_PORT, DISCOVERY_PORT, MAX_TEAM_SIZE, RED, SELECT_TIME, SNAPSHOT_EVERY, TICK_RATE
+from ..shared.constants import BLUE, DEFAULT_PORT, DISCOVERY_PORT, FINAL_SELECT_TIME, MAX_TEAM_SIZE, RED, SELECT_TIME, SNAPSHOT_EVERY, TICK_RATE
 from ..shared.net import Connection, encode
 from ..shared.spells import DEFAULT_SPELLS, SPELL_ORDER, valid_pair
 from .sim import Simulation
@@ -270,9 +270,10 @@ class GameServer:
             m = room.member(client.key)
             if room.phase == "select" and m and m.champ:
                 m.locked = True
-                self.broadcast_room(room)
                 if all(x.locked for x in room.members):
-                    self.begin_game(room)
+                    # 바로 시작하지 않고 잠깐 기다린다 (그동안 소환사 주문을 바꿀 수 있다)
+                    room.select_deadline = min(room.select_deadline, time.time() + FINAL_SELECT_TIME)
+                self.broadcast_room(room)
         elif t == "cmd":
             if room.phase == "ingame" and room.sim:
                 room.sim.handle_command(client.key, msg)

@@ -1567,7 +1567,7 @@ class GameScene(Scene):
                         ax, az = -fw * math.cos(0.6), sgn * math.sin(0.6)
                         ang = math.atan2(ax, az)
                         r.draw_transparent(self.quad, model_matrix(tx, 0.058, zc, rot_y=ang, sx=0.42, sy=1, sz=1.9),
-                                           (*col, 0.25 + 0.45 * glow))
+                                           (*col, 0.06 + 0.12 * glow))
 
         hov_id = self.hover[1] if self.hover else None
 

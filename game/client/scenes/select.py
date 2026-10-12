@@ -41,10 +41,11 @@ class SelectScene(Scene):
         self.app.audio.play("vo_select")
         self.card_rects = []
         self.btn_lock = ui.Button((WIDTH // 2 - 120, 498, 240, 46), "확정", self.lock, color=(40, 130, 80), size=20)
-        # 소환사 주문 두 칸 (D / F). 칸을 누르면 고를 수 있는 주문 목록이 열린다 — 고른 주문은 이 PC 의 설정으로 저장된다
+        # 소환사 주문 두 칸 (D / F). 챔피언을 확정한 뒤에도 게임이 시작되기 전까지 바꿀 수 있다. 칸을 누르면 고를 수 있는 주문 목록이 열린다 — 고른 주문은 이 PC 의 설정으로 저장된다
         cx = WIDTH // 2
         self.spell_rects = {"D": pygame.Rect(cx - 56, 444, SPELL_SIZE, SPELL_SIZE),
                             "F": pygame.Rect(cx + 12, 444, SPELL_SIZE, SPELL_SIZE)}
+        self.swap_rect = pygame.Rect(cx - 11, 455, 22, 22)     # 두 칸 사이: 누르면 D/F 주문 자리를 맞바꾼다
         self.picking = None             # 주문 목록이 열려 있는 칸 ("D" / "F")
         self.picker_rects = []          # [(주문 id, rect)]
         self.skill_rects = []           # [(키, rect)] — 마우스를 올리면 상세 설명
@@ -72,6 +73,10 @@ class SelectScene(Scene):
         self.app.keybinds.set_spell(slot, spell)
         self.send_spells()
 
+    def swap_spells(self):
+        self.app.keybinds.swap_spells()
+        self.send_spells()
+
     def lock(self):
         me = self.me()
         if me and me["champ"] and not me["locked"]:
@@ -84,7 +89,11 @@ class SelectScene(Scene):
 
     def handle_event(self, e):
         me = self.me()
-        locked = bool(me and me["locked"])
+        if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 and self.swap_rect.collidepoint(e.pos):
+            self.picking = None
+            self.app.audio.play("ui_select")
+            self.swap_spells()
+            return
         if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE and self.picking:
             self.picking = None
             return
@@ -96,7 +105,7 @@ class SelectScene(Scene):
                     self.picking = None
                     return
             slot = next((s for s, r in self.spell_rects.items() if r.collidepoint(e.pos)), None)
-            if slot is None or locked:
+            if slot is None:
                 self.picking = None                 # 목록 밖을 누르면 닫고, 아래 동작(버튼·카드 클릭)은 그대로 처리
             elif slot == self.picking:
                 self.picking = None
@@ -106,7 +115,7 @@ class SelectScene(Scene):
                 self.picking = slot
                 self.app.audio.play("ui_toggle")
                 return
-        elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 and not locked:
+        elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
             slot = next((s for s, r in self.spell_rects.items() if r.collidepoint(e.pos)), None)
             if slot:
                 self.picking = slot
@@ -142,8 +151,6 @@ class SelectScene(Scene):
                 self.app.audio.play("ui_tick")
             self.last_left = left
         me = self.me()
-        if me and me["locked"]:
-            self.picking = None
         self.btn_lock.enabled = bool(me and me["champ"] and not me["locked"])
         if me and me["locked"]:
             self.btn_lock.label = "확정 완료"
@@ -183,7 +190,15 @@ class SelectScene(Scene):
         if not room:
             return
         left = max(0, int(self.deadline - time.time()))
-        ui.text(surf, "챔피언을 선택하세요", (WIDTH // 2, 36), 30, anchor="center", bold=True)
+        all_locked = bool(room["members"]) and all(m["locked"] for m in room["members"])
+        me = self.me()
+        if all_locked:
+            title = "곧 게임이 시작됩니다"
+        elif me and me["locked"]:
+            title = "다른 플레이어를 기다리는 중"
+        else:
+            title = "챔피언을 선택하세요"
+        ui.text(surf, title, (WIDTH // 2, 36), 30, anchor="center", bold=True)
         ui.text(surf, f"{left}", (WIDTH // 2, 80), 34, ui.GOLD if left > 10 else ui.RED_C, anchor="center", bold=True)
 
         # 챔피언 목록
@@ -272,23 +287,39 @@ class SelectScene(Scene):
 
         # 소환사 주문 두 칸 (칸을 누르면 고를 수 있는 목록이 열린다)
         binds = self.app.keybinds
-        me = self.me()
-        locked = bool(me and me["locked"])
         cx = WIDTH // 2
         ui.panel(surf, SPELL_PANEL, (12, 18, 30, 215), ui.BORDER)
         ui.text(surf, "소환사 주문", (cx, 430), 13, ui.TEXT_DIM, anchor="center")
         for slot, rect in self.spell_rects.items():
             sid = binds.spell_at(slot)
-            hover = rect.collidepoint(mouse) and not locked
+            hover = rect.collidepoint(mouse)
             self.draw_spell_icon(surf, rect, sid, hover or self.picking == slot)
             ui.text(surf, binds.name(slot), (rect.x + 4, rect.y + 1), 12, ui.GOLD, bold=True)
             if rect.collidepoint(mouse) and not self.picking:
                 tooltip = ("spell", sid, None, SPELL_PANEL, "above")
+        self.draw_swap(surf, mouse)
+        if self.swap_rect.collidepoint(mouse) and not self.picking:
+            tooltip = None
+            ui.text(surf, "D / F 자리 바꾸기", (cx, SPELL_PANEL.top - 14), 13, ui.GOLD, anchor="center")
         self.picker_rects = []
-        if self.picking and not locked:
+        if self.picking:
             tooltip = self.draw_picker(surf, mouse) or tooltip
         if tooltip:
             self.draw_tooltip(surf, tooltip)
+
+    def draw_swap(self, surf, mouse):
+        """두 주문 칸 사이의 자리 바꾸기 버튼 (좌우 화살표)."""
+        r = self.swap_rect
+        hover = r.collidepoint(mouse)
+        pygame.draw.rect(surf, (40, 60, 95) if hover else (22, 32, 52), r, border_radius=6)
+        pygame.draw.rect(surf, ui.HIGHLIGHT if hover else ui.BORDER, r, 1, border_radius=6)
+        col = ui.GOLD if hover else (190, 200, 215)
+        cx, cy = r.center
+        for dy, d in ((-4, 1), (4, -1)):               # 위: 오른쪽 화살표, 아래: 왼쪽 화살표
+            y = cy + dy
+            pygame.draw.line(surf, col, (cx - 6, y), (cx + 6, y), 2)
+            tip = cx + 6 * d
+            pygame.draw.polygon(surf, col, [(tip + 2 * d, y), (tip - 3 * d, y - 3), (tip - 3 * d, y + 3)])
 
     def draw_spell_icon(self, surf, rect, sid, highlight=False):
         sp = SPELLS[sid]
