@@ -1,5 +1,6 @@
 """pygame 2D UI: 폰트, 텍스트, 버튼, 입력창."""
 import os
+import sys
 
 import pygame
 
@@ -237,55 +238,307 @@ class Button:
         text(surface, self.label, self.rect.center, self.size, TEXT if self.enabled else TEXT_DIM, anchor="center")
 
 
+_clip_buf = [""]      # 클립보드를 쓸 수 없을 때를 위한 게임 안 임시 보관
+
+
+def clip_get():
+    """클립보드의 글자를 읽는다 (윈도우는 직접, 그 외엔 pygame.scrap, 안 되면 게임 안 보관값)."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            u32, k32 = ctypes.windll.user32, ctypes.windll.kernel32
+            u32.GetClipboardData.restype = ctypes.c_void_p
+            k32.GlobalLock.restype = ctypes.c_void_p
+            k32.GlobalLock.argtypes = [ctypes.c_void_p]
+            k32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+            if u32.OpenClipboard(None):
+                try:
+                    h = u32.GetClipboardData(13)             # CF_UNICODETEXT
+                    if h:
+                        p = k32.GlobalLock(h)
+                        if p:
+                            try:
+                                return ctypes.wstring_at(p)
+                            finally:
+                                k32.GlobalUnlock(h)
+                finally:
+                    u32.CloseClipboard()
+        else:
+            import pygame.scrap
+            if not pygame.scrap.get_init():
+                pygame.scrap.init()
+            raw = pygame.scrap.get(pygame.SCRAP_TEXT)
+            if raw:
+                return raw.decode("utf-8", "ignore").replace("\x00", "")
+    except Exception:
+        pass
+    return _clip_buf[0]
+
+
+def clip_set(txt):
+    _clip_buf[0] = txt
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            u32, k32 = ctypes.windll.user32, ctypes.windll.kernel32
+            k32.GlobalAlloc.restype = ctypes.c_void_p
+            k32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+            k32.GlobalLock.restype = ctypes.c_void_p
+            k32.GlobalLock.argtypes = [ctypes.c_void_p]
+            k32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+            u32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+            data = (txt + "\0").encode("utf-16-le")
+            h = k32.GlobalAlloc(0x0002, len(data))           # GMEM_MOVEABLE
+            p = k32.GlobalLock(h)
+            ctypes.memmove(p, data, len(data))
+            k32.GlobalUnlock(h)
+            if u32.OpenClipboard(None):
+                try:
+                    u32.EmptyClipboard()
+                    u32.SetClipboardData(13, h)
+                finally:
+                    u32.CloseClipboard()
+        else:
+            import pygame.scrap
+            if not pygame.scrap.get_init():
+                pygame.scrap.init()
+            pygame.scrap.put(pygame.SCRAP_TEXT, txt.encode("utf-8"))
+    except Exception:
+        pass
+
+
+def _is_word_char(ch):
+    return ch.isalnum() or ch == "_"
+
+
 class TextInput:
-    def __init__(self, rect, value="", max_len=16, placeholder=""):
+    """한 줄 입력창: 커서 이동(←→ Home End, 클릭), 선택(Shift+방향키, 드래그, 더블클릭), Ctrl+A/C/V/X, Ctrl+Backspace/Delete, Delete.
+
+    charset 을 주면 그 글자만 입력/붙여넣기 된다 (예: 포트는 숫자만)."""
+
+    def __init__(self, rect, value="", max_len=16, placeholder="", charset=None):
         self.rect = pygame.Rect(rect)
-        self.value = value
         self.max_len = max_len
         self.placeholder = placeholder
+        self.charset = charset
         self.focused = False
         self.composing = ""
+        self.value = value
+        self.anchor = None          # 선택 시작 (None 이면 선택 없음)
+        self.scroll = 0
+        self._drag = False
+        self._last_click = 0
 
+    # -------------------------------------------------------------- 내용
+    @property
+    def value(self):
+        return self._value
+
+    @value.setter
+    def value(self, v):
+        self._value = v
+        self.cursor = len(v)
+        self.anchor = None
+
+    def _filter(self, txt):
+        txt = txt.replace("\r", "").replace("\n", "").replace("\t", "")
+        if self.charset is not None:
+            txt = "".join(ch for ch in txt if ch in self.charset)
+        return txt
+
+    def sel_range(self):
+        if self.anchor is None or self.anchor == self.cursor:
+            return None
+        return (min(self.anchor, self.cursor), max(self.anchor, self.cursor))
+
+    def delete_selection(self):
+        r = self.sel_range()
+        self.anchor = None
+        if not r:
+            return False
+        self._value = self._value[:r[0]] + self._value[r[1]:]
+        self.cursor = r[0]
+        return True
+
+    def insert(self, txt):
+        txt = self._filter(txt)
+        self.delete_selection()
+        room = self.max_len - len(self._value)
+        if room <= 0 or not txt:
+            return
+        txt = txt[:room]
+        self._value = self._value[:self.cursor] + txt + self._value[self.cursor:]
+        self.cursor += len(txt)
+
+    def select_all(self):
+        self.anchor, self.cursor = 0, len(self._value)
+
+    def _move(self, pos, select):
+        pos = max(0, min(len(self._value), pos))
+        if select:
+            if self.anchor is None:
+                self.anchor = self.cursor
+        else:
+            self.anchor = None
+        self.cursor = pos
+
+    def _word_left(self, i):
+        v = self._value
+        while i > 0 and not _is_word_char(v[i - 1]):
+            i -= 1
+        while i > 0 and _is_word_char(v[i - 1]):
+            i -= 1
+        return i
+
+    def _word_right(self, i):
+        v = self._value
+        while i < len(v) and not _is_word_char(v[i]):
+            i += 1
+        while i < len(v) and _is_word_char(v[i]):
+            i += 1
+        return i
+
+    def _index_at(self, x):
+        """화면 x 좌표에 가장 가까운 글자 사이 위치."""
+        rel = x - (self.rect.x + 10) + self.scroll
+        f = font(17)
+        best, best_d = 0, 1e9
+        for i in range(len(self._value) + 1):
+            d = abs(f.size(self._value[:i])[0] - rel)
+            if d < best_d:
+                best, best_d = i, d
+        return best
+
+    def _focus(self):
+        self.focused = True
+        sfx("ui_click")
+        pygame.key.start_text_input()
+        pygame.key.set_text_input_rect(self.rect)
+        pygame.key.set_repeat(380, 35)
+
+    def _blur(self):
+        self.focused = False
+        self.anchor = None
+        self._drag = False
+        pygame.key.stop_text_input()
+        pygame.key.set_repeat()
+
+    # -------------------------------------------------------------- 이벤트
     def handle(self, e):
         if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
             was = self.focused
-            self.focused = self.rect.collidepoint(e.pos)
-            if self.focused and not was:
-                sfx("ui_click")
-                pygame.key.start_text_input()
-                pygame.key.set_text_input_rect(self.rect)
-            elif was and not self.focused:
-                pygame.key.stop_text_input()
-            return self.focused
+            inside = self.rect.collidepoint(e.pos)
+            if inside and not was:
+                self._focus()
+            elif was and not inside:
+                self._blur()
+            if inside:
+                now = pygame.time.get_ticks()
+                if was and now - self._last_click < 350:
+                    self.select_all()                       # 더블클릭: 전체 선택
+                    self._drag = False
+                else:
+                    self._move(self._index_at(e.pos[0]), False)
+                    self.anchor = self.cursor
+                    self._drag = True
+                self._last_click = now
+            return inside
+        if e.type == pygame.MOUSEMOTION and self._drag and self.focused:
+            self._move(self._index_at(e.pos[0]), True)
+            if self.anchor == self.cursor:
+                self.anchor = self.cursor
+            return True
+        if e.type == pygame.MOUSEBUTTONUP and e.button == 1:
+            if self._drag and self.anchor == self.cursor:
+                self.anchor = None
+            self._drag = False
+            return False
         if not self.focused:
             return False
         if e.type == pygame.TEXTINPUT:
             self.composing = ""
-            self.value = (self.value + e.text)[: self.max_len]
+            self.insert(e.text)
             return True
         if e.type == pygame.TEXTEDITING:
             self.composing = e.text
             return True
         if e.type == pygame.KEYDOWN:
-            if e.key == pygame.K_BACKSPACE and not self.composing:
-                self.value = self.value[:-1]
-                return True
-            if e.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_TAB):
-                self.focused = False
-                pygame.key.stop_text_input()
-                return True
+            if self.composing:                               # 조합 중인 한글은 입력기에 맡긴다
+                return e.key not in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_TAB)
+            mods = e.mod
+            ctrl = bool(mods & pygame.KMOD_CTRL) or bool(mods & pygame.KMOD_META)
+            shift = bool(mods & pygame.KMOD_SHIFT)
+            k = e.key
+            if ctrl and k == pygame.K_a:
+                self.select_all()
+            elif ctrl and k in (pygame.K_c, pygame.K_x):
+                r = self.sel_range()
+                if r:
+                    clip_set(self._value[r[0]:r[1]])
+                    if k == pygame.K_x:
+                        self.delete_selection()
+            elif ctrl and k == pygame.K_v or (shift and k == pygame.K_INSERT):
+                self.insert(clip_get() or "")
+            elif k == pygame.K_BACKSPACE:
+                if not self.delete_selection() and self.cursor > 0:
+                    to = self._word_left(self.cursor) if ctrl else self.cursor - 1
+                    self._value = self._value[:to] + self._value[self.cursor:]
+                    self.cursor = to
+            elif k == pygame.K_DELETE:
+                if not self.delete_selection() and self.cursor < len(self._value):
+                    to = self._word_right(self.cursor) if ctrl else self.cursor + 1
+                    self._value = self._value[:self.cursor] + self._value[to:]
+            elif k == pygame.K_LEFT:
+                r = self.sel_range()
+                if r and not shift:
+                    self.anchor, self.cursor = None, r[0]
+                else:
+                    self._move(self._word_left(self.cursor) if ctrl else self.cursor - 1, shift)
+            elif k == pygame.K_RIGHT:
+                r = self.sel_range()
+                if r and not shift:
+                    self.anchor, self.cursor = None, r[1]
+                else:
+                    self._move(self._word_right(self.cursor) if ctrl else self.cursor + 1, shift)
+            elif k in (pygame.K_HOME, pygame.K_UP):
+                self._move(0, shift)
+            elif k in (pygame.K_END, pygame.K_DOWN):
+                self._move(len(self._value), shift)
+            elif k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_TAB):
+                self._blur()
+            else:
+                return ctrl                                  # 그 밖의 Ctrl 조합은 게임 단축키로 새지 않게 삼킨다
+            return True
         return False
 
+    # -------------------------------------------------------------- 그리기
     def draw(self, surface):
         pygame.draw.rect(surface, (10, 16, 28, 240), self.rect, border_radius=5)
         pygame.draw.rect(surface, HIGHLIGHT if self.focused else BORDER, self.rect, 1, border_radius=5)
-        shown = self.value + self.composing
+        f = font(17)
+        v, c = self._value, self.cursor
+        shown = v[:c] + self.composing + v[c:] if self.focused else v
         y = self.rect.centery
+        inner_w = self.rect.w - 20
+        cur_px = f.size(v[:c] + self.composing)[0]
+        if cur_px - self.scroll > inner_w:
+            self.scroll = cur_px - inner_w
+        elif cur_px < self.scroll:
+            self.scroll = cur_px
+        if f.size(shown)[0] <= inner_w:
+            self.scroll = 0
+        old_clip = surface.get_clip()
+        surface.set_clip(self.rect.inflate(-8, -4).clip(old_clip))
+        x0 = self.rect.x + 10 - self.scroll
+        sel = self.sel_range() if self.focused else None
+        if sel:
+            a, b = f.size(v[:sel[0]])[0], f.size(v[:sel[1]])[0]
+            pygame.draw.rect(surface, (50, 90, 160), (x0 + a, y - 11, b - a, 22))
         if shown:
-            r = text(surface, shown, (self.rect.x + 10, y), 17, TEXT, anchor="midleft", shadow=False)
+            text(surface, shown, (x0, y), 17, TEXT, anchor="midleft", shadow=False)
         else:
-            r = pygame.Rect(self.rect.x + 10, y, 0, 0)
             text(surface, self.placeholder, (self.rect.x + 10, y), 17, TEXT_DIM, anchor="midleft", shadow=False)
         if self.focused and (pygame.time.get_ticks() // 500) % 2 == 0:
-            x = r.right + 2 if shown else self.rect.x + 10
+            x = x0 + cur_px + 1
             pygame.draw.line(surface, TEXT, (x, y - 10), (x, y + 10), 1)
+        surface.set_clip(old_clip)

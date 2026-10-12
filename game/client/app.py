@@ -101,6 +101,8 @@ class App:
         self.net = NetClient()
         self.server = None          # 이 프로세스에서 띄운 서버
         self.hosting = False        # 내가 방장 겸 서버인가 (로비 없이 자동으로 방을 만든다)
+        self.auto_join = False      # 접속 직후 열려 있는 방에 바로 들어갈 차례인가 (로비 생략)
+        self.joining = False        # 방 입장을 요청해 놓고 답을 기다리는 중
         self.my_key = None
         self.my_name = ""
         self.server_addr = ""
@@ -176,6 +178,7 @@ class App:
         if self.server is not None and self.server.port != port:
             self.stop_hosting()                      # 예전에 연 서버가 다른 포트면 닫고 새 포트로 다시 연다
         self.hosting = False
+        self.auto_join = False
         if self.server is None:
             try:
                 srv = GameServer("0.0.0.0", port, verbose=False)
@@ -256,11 +259,21 @@ class App:
                     # 한 호스트당 방 하나: 로비를 건너뛰고 바로 내 방을 만든다 (곧 대기실 화면으로 넘어간다)
                     self.send({"t": "create_room", "name": f"{self.my_name}의 방"})
                 else:
-                    self.set_scene(LobbyScene(self))
+                    self.auto_join = True            # 한 호스트당 방 하나: 로비를 거치지 않고 곧 도착할 방 목록에서 바로 들어간다
             elif t == "rooms":
                 self.rooms = msg["rooms"]
+                if self.auto_join:
+                    self.auto_join = False
+                    open_rooms = [r for r in self.rooms if r["phase"] == "waiting" and r["count"] < r["size"] * 2]
+                    if open_rooms:
+                        self.joining = True
+                        self.send({"t": "join_room", "id": open_rooms[0]["id"]})
+                    else:
+                        self.toast("들어갈 수 있는 방이 없습니다. (게임이 이미 진행 중이거나 방이 가득 찼습니다)")
+                        self.set_scene(LobbyScene(self))
             elif t == "room":
                 self.room = msg
+                self.joining = False
                 phase = msg["phase"]
                 if phase == "waiting" and not isinstance(self.scene, RoomScene):
                     self.set_scene(RoomScene(self))
@@ -271,6 +284,9 @@ class App:
             elif t == "error":
                 self.audio.play("ui_error")
                 self.toast(msg.get("msg", "오류"))
+                if self.joining:                     # 바로 접속하던 방에 못 들어가면 로비에서 직접 고른다
+                    self.joining = False
+                    self.set_scene(LobbyScene(self))
             elif t == "chat":
                 self.audio.play("ui_chat")
                 self.chat.append((time.time(), msg["name"], msg["text"]))
@@ -298,8 +314,8 @@ class App:
         for team in (0, 1):
             meshes = self.models.team_meshes[team]
             sign = -1 if team == 0 else 1
-            for x, z, key in ((22, 0, "turret"), (34, 0, "turret"), (41, 0, "inhibitor"), (47, -2.6, "turret"),
-                              (47, 2.6, "turret"), (51, 0, "nexus")):
+            for x, z, key in ((22, 0, "turret"), (29, 0, "inhibitor"), (35, -2.6, "turret"),
+                              (35, 2.6, "turret"), (39, 0, "nexus")):
                 self.renderer.draw(meshes[key], model_matrix(x * sign, 0, z))
 
     # ------------------------------------------------------------------ 루프
