@@ -17,7 +17,7 @@ class TitleScene(Scene):
         cx = WIDTH // 2
         name = self.app.my_name or f"플레이어{random.randint(100, 999)}"
         self.name_in = ui.TextInput((cx - 160, 300, 320, 40), name, 12, "닉네임")
-        self.addr_in = ui.TextInput((cx - 160, 386, 220, 40), "", 40, "비우면 서버 열기")
+        self.addr_in = ui.TextInput((cx - 160, 386, 220, 40), "", 40, "")
         self.port_in = ui.TextInput((cx + 70, 386, 90, 40), str(DEFAULT_PORT), 5, "포트", charset="0123456789")
         self.inputs = [self.name_in, self.addr_in, self.port_in]
         self.btn_start = ui.Button((cx - 160, 446, 320, 48), "시작", self.start, color=(40, 100, 170), size=18)
@@ -40,10 +40,9 @@ class TitleScene(Scene):
     def layout_addr(self):
         """앞부분 칸(왼쪽)과 입력칸(오른쪽)을 나눠 배치한다."""
         cx = WIDTH // 2
-        pre = self.prefix()
-        pw = (ui.font(17).size(pre)[0] + 16) if pre else 44
+        pw = 108                                                   # 앞부분 칸과 입력칸은 같은 가로 크기
         self.pre_rect = pygame.Rect(cx - 160, 386, pw, 40)
-        self.addr_in.rect = pygame.Rect(cx - 160 + pw, 386, 220 - pw, 40)
+        self.addr_in.rect = pygame.Rect(cx - 160 + pw + 4, 386, pw, 40)
 
     def full_addr(self):
         """입력한 값을 접속 주소로 바꾼다. 점이 3개 미만인 숫자 주소는 앞부분을 붙이고, 글자가 섞였거나 이미 전체 주소면 그대로 쓴다."""
