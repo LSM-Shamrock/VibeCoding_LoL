@@ -188,6 +188,9 @@ class Simulation:
         for st in self.structures.values():
             if st.team == team and st.alive:
                 out.append((st.x, st.z, SIGHT[st.skind], -1))
+        for a in self.anchors.values():                     # 거미 고치: 놓인 곳 주변만 좁게 보인다 (부쉬 안이면 그 부쉬도)
+            if a.team == team and getattr(a, "cocoon", False):
+                out.append((a.x, a.z, SIGHT["cocoon"], mapdata.bush_at(a.x, a.z)))
         return out
 
     @staticmethod
@@ -209,11 +212,17 @@ class Simulation:
             for m in self.minions.values():
                 if m.team != team and self.seen_by(obs, m.x, m.z):
                     vis.add(m.id)
+            for a in self.anchors.values():                 # 적 고치는 부쉬 밖이면 늘 보이고, 부쉬 안이면 그 부쉬를 볼 때만 보인다
+                if (a.team != team and getattr(a, "cocoon", False)
+                        and (mapdata.bush_at(a.x, a.z) < 0 or self.seen_by(obs, a.x, a.z))):
+                    vis.add(a.id)
             self.visible[team] = vis
             self._observers[team] = obs
 
     def can_see(self, team, u):
         """team 이 유닛 u 를 볼 수 있는가 (아군과 구조물은 항상 보임)."""
+        if isinstance(u, Anchor) and getattr(u, "cocoon", False):
+            return u.team == team or u.id in self.visible[team]
         return u.team == team or isinstance(u, (Structure, Anchor)) or u.id in self.visible[team]
 
     def in_fountain(self, c):
@@ -1656,7 +1665,7 @@ class Simulation:
             anchors = [[a.id, a.team, round(a.x, 2), round(a.z, 2), math.ceil(a.hp), round(a.until - t, 1),
                         1 if getattr(a, "cocoon", False) else 0, round(getattr(a, "until", 0) - getattr(a, "born", 0), 1),
                         int(a.max_hp)]
-                       for a in self.anchors.values()]
+                       for a in self.anchors.values() if self.can_see(team, a)]
             # 회복 구슬은 시야 안에 있을 때만 있다고 알려준다
             relics = [[r.id, r.x, r.z, int(r.active and self.seen_by(obs, r.x, r.z))] for r in self.relics]
             out[team] = {

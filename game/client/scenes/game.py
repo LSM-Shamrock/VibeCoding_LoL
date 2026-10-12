@@ -76,7 +76,7 @@ HOVER_RADIUS = {"champion": 58, "minion": 38}
 HUD_RECT = pygame.Rect(300, 606, 680, 108)
 MM_BG = (14, 11, 8, 240)                # 미니맵 바탕: 길 바깥쪽과 같은 어두운 색
 MM_PAD = 2                              # 미니맵 좌우 여백 (px)
-MINIMAP_X = 70.0                        # 미니맵이 덮는 x 범위 (±)
+MINIMAP_X = 58.0                        # 미니맵이 덮는 x 범위 (±)
 INV_COLS = 4                            # 인벤토리 4칸 x 2줄
 CHAT_X, CHAT_Y, CHAT_W = 12, 572, 440     # 채팅 입력칸 (왼쪽 아래, 로그는 그 위로 쌓임)
 CHAT_FONT, CHAT_LINE = 16, 22              # 채팅 글자 크기, 줄 간격
@@ -352,7 +352,9 @@ class GameScene(Scene):
         self.rmb_minimap = False    # 미니맵을 우클릭한 채로 있으면 계속 이동 명령
         self.shop_rects = []
         self.shop_buy_rect = None      # 상점 오른쪽 구매 버튼
-        self.shop_sel = None           # 상점에서 고른 아이템 (오른쪽에 표시)
+        self.shop_sel = None           # 상점에서 고른 아이템 (구매 버튼으로 살 것)
+        self.shop_view = None          # 상점 오른쪽에 조합 트리를 보여 주는 아이템
+        self.shop_sel_pos = None       # 트리에서 고른 칸 위치
         self.levelup_rects = []
         self.hud_inv_rects = []     # HUD 인벤토리 칸 (상점이 열려 있으면 우클릭 판매)
         self.gold_rect = None       # 골드 글자 (클릭하면 상점 열기/닫기)
@@ -450,6 +452,9 @@ class GameScene(Scene):
         for sid, st in self.structs.items():
             if st["tm"] == self.my_team and self.struct_state[sid][2]:
                 obs.append((st["x"], st["z"], SIGHT[st["k"]]))
+        for row, _ in self.anchors:                      # 내 팀 거미 고치: 주변만 좁게
+            if row[1] == self.my_team and len(row) > 6 and row[6] == 1:
+                obs.append((row[2], row[3], SIGHT["cocoon"]))
         # 칸마다 "얼마나 보이는가"(0~1)를 거리에 따라 부드럽게 계산한다 (가장자리를 계단 없이 번지게)
         vis = np.zeros(self.vis_x.shape, dtype=np.float32)
         cell = mapdata.VIS_CELL
@@ -482,6 +487,10 @@ class GameScene(Scene):
     def me(self):
         e = self.champs.get(self.my_id)
         return e.d if e else None
+
+    def view_team(self, team):
+        """화면에 보일 팀 색: 내 팀은 어느 쪽이든 항상 파랑, 상대 팀은 빨강."""
+        return BLUE if team == self.my_team else RED
 
     def my_data(self):
         return gamedata.champion(self.champ_info[self.my_id]["c"]) if self.my_id else None
@@ -1416,11 +1425,14 @@ class GameScene(Scene):
                 if self.shop_buy_rect and self.shop_buy_rect.collidepoint(pos):
                     self.buy_item(self.shop_sel)
                     return True
-                for iid, rect in self.shop_rects:
+                for iid, rect, nav in self.shop_rects:
                     if rect.collidepoint(pos):
-                        if iid != getattr(self, "shop_sel", None):
+                        if iid != self.shop_sel:
                             self.audio.play("ui_select")
                         self.shop_sel = iid
+                        self.shop_sel_pos = None if nav else rect.topleft     # 같은 재료가 여러 칸이면 누른 칸만 표시
+                        if nav:                     # 트리 안의 재료를 누르면 트리는 그대로 두고 고르기만 한다
+                            self.shop_view = iid
                         break
                 return True
         me = self.me
@@ -1445,9 +1457,12 @@ class GameScene(Scene):
         self.cam_locked = False
 
     def shop_right_click(self, pos):
-        for iid, rect in self.shop_rects:
+        for iid, rect, nav in self.shop_rects:
             if rect.collidepoint(pos):
                 self.shop_sel = iid
+                self.shop_sel_pos = None if nav else rect.topleft
+                if nav:
+                    self.shop_view = iid
                 self.buy_item(iid)
                 return
 
@@ -1526,7 +1541,7 @@ class GameScene(Scene):
             if keys[pygame.K_DOWN]:
                 ey = 1
             speed = 32.0 * dt * (cam.distance / 22.0)
-            cam.tx = max(-70, min(70, cam.tx + ex * speed))
+            cam.tx = max(-58, min(58, cam.tx + ex * speed))
             cam.tz = max(-15, min(15, cam.tz + ey * speed))
 
         self.audio.listener = (cam.tx, cam.tz)
@@ -1560,7 +1575,7 @@ class GameScene(Scene):
         # 우물 범위 표시
         for team in (BLUE, RED):
             fx, fz = mapdata.fountain_pos(team)
-            col = (0.3, 0.6, 1.0) if team == BLUE else (1.0, 0.35, 0.3)
+            col = (0.3, 0.6, 1.0) if self.view_team(team) == BLUE else (1.0, 0.35, 0.3)
             r.draw_transparent(m.ring_thin, model_matrix(fx, 0.06, fz, scale=7.5), (*col, 0.5))
 
         hov_id = self.hover[1] if self.hover else None
@@ -1578,7 +1593,7 @@ class GameScene(Scene):
         for sid, s in self.structs.items():
             st = self.struct_state[sid]
             alive = st[2]
-            meshes = m.team_meshes[s["tm"]]
+            meshes = m.team_meshes[self.view_team(s["tm"])]
             emis = (0.18, 0.18, 0.18) if sid == hov_id else (0, 0, 0)
             if s["k"] == "turret":
                 mesh = meshes["turret"] if alive else m.rubble
@@ -1629,7 +1644,7 @@ class GameScene(Scene):
                 r.draw_transparent(m.ring, model_matrix(e.x, 0.05, e.z, scale=0.5),
                                    (0.3, 0.6, 1.0, 0.8) if team == self.my_team else (1.0, 0.3, 0.3, 0.8))
             emis = (0.2, 0.2, 0.2) if mid == hov_id else (0, 0, 0)
-            mesh_ = m.team_meshes[team][key]
+            mesh_ = m.team_meshes[self.view_team(team)][key]
             if isinstance(mesh_, list):                        # 새끼 거미: 거미 여왕과 같은 걸음의 한 주기를 돌려 가며 그린다
                 mesh_ = mesh_[int(((t + mid * 0.137) % BABY_PERIOD) / BABY_PERIOD * len(mesh_)) % len(mesh_)]
             tilt, hop = 0.0, 0.0
@@ -1792,8 +1807,9 @@ class GameScene(Scene):
                     tint, emis = (1.0, 0.8, 0.78, 1), tuple(min(1.0, e + g) for e, g in zip(emis, (0.42, 0.07, 0.05)))
             if p["style"] in ("minion_bolt", "cannon_ball", "turret_shot", "turret_shot_2", "turret_shot_3"):
                 # 미니언·포탑 투사체는 팀 색 (블루 / 레드)
-                tint = (0.4, 0.65, 1.0, 1) if p["team"] == BLUE else (1.0, 0.4, 0.35, 1)
-                emis = (0.1, 0.2, 0.45) if p["team"] == BLUE else (0.45, 0.12, 0.1)
+                blue = self.view_team(p["team"]) == BLUE
+                tint = (0.4, 0.65, 1.0, 1) if blue else (1.0, 0.4, 0.35, 1)
+                emis = (0.1, 0.2, 0.45) if blue else (0.45, 0.12, 0.1)
             r.draw(mesh, model_matrix(x, y, z, rot_y=rot, scale=PROJ_SCALE.get(p["style"], 1.3)), tint=tint, emissive=emis)
             if p["style"] not in ("minion_bolt", "cannon_ball"):       # 미니언 투사체는 꼬리·빛 없이 구만
                 self.vfx.projectile(p, x, y, z, p["team"] == self.my_team)
@@ -2544,30 +2560,20 @@ class GameScene(Scene):
         ui.bar(surf, (392, 697, 356, 11), me["mp"] / max(1, me["mmp"]), (70, 120, 230))
         ui.text(surf, f"{me['mp']} / {me['mmp']}", (570, 702), 10, anchor="center", shadow=True)
 
-        # 아이템: 왼쪽에 신발 전용 칸 하나, 오른쪽에 일반 아이템 4칸 x 2줄 (롤처럼 신발은 따로 분리)
+        # 아이템 (4칸 x 2줄, 신발도 한 칸을 차지한다)
         self.hud_inv_rects = []
-        owned = me["it"]
-        boot_i = next((k for k, iid in enumerate(owned) if gamedata.is_boots(iid)), None)
-        reg = [k for k, iid in enumerate(owned) if not gamedata.is_boots(iid)]
-        slots = [(764, 635, boot_i, True)] + [(806 + (i % INV_COLS) * 37, 616 + (i // INV_COLS) * 38,
-                                              reg[i] if i < len(reg) else None, False) for i in range(INVENTORY_SLOTS)]
-        for x, y, real, is_boot_slot in slots:
+        for i in range(INVENTORY_SLOTS):
+            x = 764 + (i % INV_COLS) * 37
+            y = 616 + (i // INV_COLS) * 38
             rect = pygame.Rect(x, y, 34, 34)
             pygame.draw.rect(surf, (25, 30, 42), rect, border_radius=4)
-            if real is None:
-                if is_boot_slot:
-                    ui.text(surf, "신발", rect.center, 11, (80, 90, 110), anchor="center", shadow=False)
-                    if rect.collidepoint(mouse):
-                        tooltip = ("신발 칸", "신발은 하나만 살 수 있습니다.\n기본 신발에서 상위 신발로 업그레이드할 수 있습니다.")
-            else:
-                iid = owned[real]
-                it = gamedata.items()[iid]
-                draw_item(surf, iid, rect.inflate(-2, -2))
-                self.hud_inv_rects.append((real, rect))
+            if i < len(me["it"]):
+                it = gamedata.items()[me["it"][i]]
+                draw_item(surf, me["it"][i], rect.inflate(-2, -2))
+                self.hud_inv_rects.append((i, rect))
                 if rect.collidepoint(mouse):
                     sell = round(it["cost"] * SELL_RATIO)
-                    tooltip = (it["name"], f"{item_stat_text(it)}\n판매 시 {sell} G ({int(SELL_RATIO * 100)}%)"
-                               + ("  ·  우클릭으로 판매" if self.shop_open else ""))
+                    tooltip = (it["name"], f"{item_stat_text(it)}\n판매 시 {sell} G ({int(SELL_RATIO * 100)}%)")
             pygame.draw.rect(surf, ui.BORDER, rect, 1, border_radius=4)
         self.gold_rect = ui.text(surf, f"{me['g']} G", (914, 706), 18, ui.GREEN_C if me.get("shop") else ui.GOLD,
                                  anchor="bottomleft", bold=True)
@@ -2795,7 +2801,7 @@ class GameScene(Scene):
         # 부활 지점 원과 주위 기둥
         for team in (BLUE, RED):
             fx, fz = mapdata.fountain_pos(team)
-            fc = ui.TEAM_UI[team]
+            fc = ui.TEAM_UI[self.view_team(team)]
             c0 = self.world_to_minimap(fx, fz)
             pygame.draw.ellipse(surf, tuple(int(v * 0.45) for v in fc),
                                 self.minimap_ellipse(fx, fz, 5.5))
@@ -2805,7 +2811,7 @@ class GameScene(Scene):
                 pygame.draw.circle(surf, (205, 195, 170), pp, 2)
         for sid, s in self.structs.items():
             st = self.struct_state[sid]
-            col = ui.TEAM_UI[s["tm"]] if st[2] else (60, 60, 70)
+            col = ui.TEAM_UI[self.view_team(s["tm"])] if st[2] else (60, 60, 70)
             p = self.world_to_minimap(s["x"], s["z"])
             size = 4 if s["k"] == "turret" else 6
             pygame.draw.rect(surf, col, (p[0] - size // 2, p[1] - size // 2, size, size))
@@ -2813,7 +2819,7 @@ class GameScene(Scene):
             if active:
                 pygame.draw.circle(surf, (90, 230, 120), self.world_to_minimap(x, z), 3)
         for e in self.minions.values():
-            col = (120, 170, 255) if e.d[2] == BLUE else (255, 120, 110)
+            col = (120, 170, 255) if self.view_team(e.d[2]) == BLUE else (255, 120, 110)
             p = self.world_to_minimap(e.x, e.z)
             pygame.draw.rect(surf, col, (p[0] - 1, p[1] - 1, 2, 2))
         if self.minimap_fog:
@@ -2826,7 +2832,7 @@ class GameScene(Scene):
             mine = cid == self.my_id
             data = gamedata.champion(info["c"]) or {}
             # 각 챔피언의 얼굴 아이콘 (테두리는 팀 색, 내 챔피언은 금색으로 더 굵게)
-            ring_col = ui.GREEN_C if mine else ui.TEAM_UI[info["tm"]]
+            ring_col = ui.GREEN_C if mine else ui.TEAM_UI[self.view_team(info["tm"])]
             draw_round_portrait(surf, info["c"], p, 8, ring_col, color=data.get("color", (160, 170, 190)), ring_w=0)
             draw_hp_ring(surf, p, 11, e.d["hp"] / max(1, e.d["mhp"]), ring_col, 3)
         # 내 이동 경로
@@ -2873,7 +2879,6 @@ class GameScene(Scene):
         can = bool(me and me.get("shop"))
         if not can:
             ui.text(surf, "우물 / 사망 시 구매 가능", (p.x + 90, p.y + 22), 14, ui.RED_C)
-        ui.text(surf, "좌클릭: 선택   ·   우클릭: 바로 구매", (p.centerx - 70, p.y + 22), 13, ui.TEXT_DIM, anchor="midtop")
         if me:
             ui.text(surf, f"{me['g']} G", (p.right - 20, p.y + 16), 22, ui.GOLD, anchor="topright", bold=True)
         self.shop_rects = []
@@ -2885,8 +2890,10 @@ class GameScene(Scene):
         tier1 = [i for i, it in its.items() if it.get("tier", 1) == 1 and not it.get("boots")]
         boots = [i for i, it in its.items() if it.get("boots")]
         tier2 = [i for i, it in its.items() if it.get("tier", 1) >= 2 and not it.get("boots")]
-        if getattr(self, "shop_sel", None) not in its:
-            self.shop_sel = tier2[0] if tier2 else next(iter(its))
+        if self.shop_view not in its:
+            self.shop_view = tier2[0] if tier2 else next(iter(its))
+        if self.shop_sel not in its:
+            self.shop_sel = self.shop_view
         sel = self.shop_sel
         top = p.y + 56
 
@@ -2894,7 +2901,6 @@ class GameScene(Scene):
         bx = pygame.Rect(p.x + 14, top, 196, p.bottom - top - 14)
         ui.panel(surf, bx, (16, 24, 40, 235), (60, 75, 105), radius=6)
         ui.text(surf, "신발", (bx.x + 12, bx.y + 10), 15, ui.GOLD, bold=True)
-        ui.text(surf, "하나만 · 따로 한 칸", (bx.right - 10, bx.y + 13), 11, ui.TEXT_DIM, anchor="topright")
         y = bx.y + 38
         for iid in boots:
             rect = pygame.Rect(bx.x + 8, y, bx.width - 16, 50)
@@ -2916,10 +2922,10 @@ class GameScene(Scene):
 
         # 오른쪽: 고른 아이템
         area = pygame.Rect(mid.right + 10, top, p.right - mid.right - 24, p.bottom - top - 14)
-        self.draw_shop_detail(surf, area, sel, owned, gold, can, mouse)
+        self.draw_shop_detail(surf, area, self.shop_view, sel, owned, gold, can, mouse)
 
         # 마우스를 올린 아이템 이름
-        hov = next((iid for iid, r in self.shop_rects if r.collidepoint(mouse)), None)
+        hov = next((iid for iid, r, _nav in self.shop_rects if r.collidepoint(mouse)), None)
         if hov and hov != sel:
             ui.text(surf, its[hov]["name"], (mouse[0] + 14, mouse[1] + 18), 14, ui.TEXT)
 
@@ -2953,17 +2959,20 @@ class GameScene(Scene):
             ui.text(surf, f"{price}", (rect.centerx, ir.bottom + 5), 13, pc, anchor="midtop")
         if used and allowed:                       # 가진 재료가 쓰인다 (그만큼 싸짐)
             pygame.draw.circle(surf, (110, 220, 130), (ir.right - 4, ir.y + 4), 4)
-        self.shop_rects.append((iid, rect))
+        self.shop_rects.append((iid, rect, True))
 
-    def draw_shop_detail(self, surf, area, iid, owned, gold, can, mouse):
-        """고른 아이템: 이름·가격·능력치, 조합 트리(재료도 고르거나 우클릭으로 바로 살 수 있다), 상위 아이템, 구매 버튼."""
+    def draw_shop_detail(self, surf, area, view, sel, owned, gold, can, mouse):
+        """오른쪽 창: 위에 고른 아이템(sel)의 이름·가격·능력치, 가운데에 view 아이템의 조합 트리와 상위 아이템, 아래에 구매 버튼.
+
+        트리 안의 재료를 누르면 트리(view)는 그대로 두고 그 재료만 골라진다 (구매 버튼으로 산다).
+        """
         its = gamedata.items()
-        it = its[iid]
+        it = its[sel]
         ui.panel(surf, area, (16, 24, 40, 235), (60, 75, 105), radius=6)
         x, y = area.x + 12, area.y + 12
-        draw_item(surf, iid, (x, y, 52, 52))
+        draw_item(surf, sel, (x, y, 52, 52))
         ui.text(surf, it["name"], (x + 62, y + 4), 17, ui.GOLD, bold=True)
-        allowed, used, price, why = gamedata.can_buy(owned, iid, INVENTORY_SLOTS)
+        allowed, used, price, _why = gamedata.can_buy(owned, sel, INVENTORY_SLOTS)
         cost_txt = f"{price} G" + (f"  (총 {it['cost']} G)" if price != it["cost"] else "")
         ui.text(surf, cost_txt, (x + 62, y + 30), 14, ui.GOLD if gold >= price else (200, 130, 110))
         y += 62
@@ -2972,17 +2981,17 @@ class GameScene(Scene):
             y += 18
         y += 10
 
-        # 조합 트리: 위에 이 아이템, 아래에 재료 (가진 재료는 초록 테두리)
-        comps = it.get("from", [])
+        # 조합 트리: 위에 view 아이템, 아래에 재료 (가진 재료는 초록 테두리)
+        vit = its[view]
+        comps = vit.get("from", [])
+        pygame.draw.line(surf, (60, 75, 105), (area.x + 10, y), (area.right - 10, y))
+        y += 16
+        s_top, s_c = 44, 40
+        top_r = pygame.Rect(0, 0, s_top, s_top)
+        top_r.midtop = (area.centerx, y)
+        self.draw_tree_node(surf, top_r, view, view in owned, mouse, sel)
+        y = top_r.bottom + 10
         if comps:
-            pygame.draw.line(surf, (60, 75, 105), (area.x + 10, y), (area.right - 10, y))
-            y += 10
-            ui.text(surf, "조합", (x, y), 13, ui.TEXT_DIM)
-            y += 22
-            s_top, s_c = 44, 40
-            top_r = pygame.Rect(0, 0, s_top, s_top)
-            top_r.midtop = (area.centerx, y)
-            self.draw_tree_node(surf, top_r, iid, iid in owned, mouse, iid)
             n = len(comps)
             gap = 16
             total = n * s_c + (n - 1) * gap
@@ -2997,13 +3006,13 @@ class GameScene(Scene):
                     left_items.remove(c)
                 pygame.draw.line(surf, (90, 100, 130), (r.centerx, mid_y), (r.centerx, r.top), 2)
                 pygame.draw.line(surf, (90, 100, 130), (top_r.centerx, mid_y), (r.centerx, mid_y), 2)
-                self.draw_tree_node(surf, r, c, have, mouse, iid)
+                self.draw_tree_node(surf, r, c, have, mouse, sel)
                 ui.text(surf, f"{its[c]['cost']}", (r.centerx, r.bottom + 4), 12,
                         (120, 220, 140) if have else ui.GOLD, anchor="midtop", shadow=False)
             y = cy + s_c + 26
 
-        # 이 아이템이 재료로 들어가는 상위 아이템
-        ups = gamedata.upgrades_of(iid)
+        # view 아이템이 재료로 들어가는 상위 아이템 (누르면 그 아이템의 트리로 간다)
+        ups = gamedata.upgrades_of(view)
         if ups:
             pygame.draw.line(surf, (60, 75, 105), (area.x + 10, y), (area.right - 10, y))
             y += 10
@@ -3011,7 +3020,7 @@ class GameScene(Scene):
             y += 22
             for k, u in enumerate(ups):
                 r = pygame.Rect(x + 3 + (k % 5) * 50, y + 3 + (k // 5) * 50, 38, 38)
-                self.draw_tree_node(surf, r, u, False, mouse, iid)
+                self.draw_tree_node(surf, r, u, False, mouse, sel, nav=True)
             y += ((len(ups) + 4) // 5) * 50
 
         # 구매 버튼
@@ -3022,29 +3031,20 @@ class GameScene(Scene):
         pygame.draw.rect(surf, col, btn, border_radius=6)
         pygame.draw.rect(surf, ui.HIGHLIGHT if ok and hover else ui.BORDER, btn, 1, border_radius=6)
         ui.text(surf, f"구매   {price} G", btn.center, 18, ui.TEXT if ok else ui.TEXT_DIM, anchor="center", bold=True)
-        if not allowed:
-            note = why
-        elif not can:
-            note = "우물에 있거나 죽었을 때만 살 수 있습니다"
-        elif gold < price:
-            note = f"{price - gold} G 부족"
-        else:
-            note = ""
-        if note:
-            ui.text(surf, note, (btn.centerx, btn.y - 8), 12, (230, 130, 110), anchor="midbottom", shadow=False)
         self.shop_buy_rect = btn
 
-    def draw_tree_node(self, surf, r, iid, have, mouse, sel):
-        """조합 트리 / 상위 아이템 칸 (누르면 그 아이템을 고르고, 우클릭하면 바로 산다)."""
+    def draw_tree_node(self, surf, r, iid, have, mouse, sel, nav=False):
+        """조합 트리 / 상위 아이템 칸. 누르면 그 아이템을 고르고(nav 면 그 아이템의 트리로 이동), 우클릭하면 바로 산다."""
         hover = r.collidepoint(mouse)
-        border = ui.GOLD if iid == sel else ((90, 210, 110) if have else (ui.HIGHLIGHT if hover else (80, 85, 105)))
+        chosen = iid == sel and self.shop_sel_pos in (None, r.topleft)
+        border = ui.GOLD if chosen else ((90, 210, 110) if have else (ui.HIGHLIGHT if hover else (80, 85, 105)))
         pygame.draw.rect(surf, (30, 34, 46), r.inflate(6, 6), border_radius=5)
-        pygame.draw.rect(surf, border, r.inflate(6, 6), 2 if hover or iid == sel or have else 1, border_radius=5)
+        pygame.draw.rect(surf, border, r.inflate(6, 6), 2 if hover or chosen or have else 1, border_radius=5)
         draw_item(surf, iid, r)
         if have:
             pygame.draw.circle(surf, (90, 210, 110), (r.right - 2, r.y + 2), 6)
             pygame.draw.lines(surf, (12, 30, 16), False, [(r.right - 5, r.y + 2), (r.right - 3, r.y + 4), (r.right + 1, r.y - 1)], 2)
-        self.shop_rects.append((iid, r))
+        self.shop_rects.append((iid, r, nav))
 
     # ---- 점수판
     def draw_scoreboard(self, surf):
@@ -3113,13 +3113,10 @@ class GameScene(Scene):
                 # K/D/A, CS
                 ui.text(surf, f"{k} / {dth} / {a}", (row.x + 236, row.centery - 9), 16, anchor="center", bold=True)
                 ui.text(surf, f"CS {cs}", (row.x + 236, row.centery + 13), 12, ui.TEXT_DIM, anchor="center")
-                # 아이템 (인벤토리처럼: 왼쪽 신발 칸 + 4칸 x 2줄)
-                boot_id = next((i for i in inv if gamedata.is_boots(i)), None)
-                regs = [i for i in inv if not gamedata.is_boots(i)]
-                cells = [(row.x + 292, row.y + 25, boot_id)] + [
-                    (row.x + 334 + (i % INV_COLS) * 36, row.y + 7 + (i // INV_COLS) * 36, regs[i] if i < len(regs) else None)
-                    for i in range(INVENTORY_SLOTS)]
-                for ix, iy, iid in cells:
+                # 아이템 (인벤토리처럼 4칸 x 2줄)
+                for i in range(INVENTORY_SLOTS):
+                    iid = inv[i] if i < len(inv) else None
+                    ix, iy = row.x + 300 + (i % INV_COLS) * 36, row.y + 7 + (i // INV_COLS) * 36
                     ir = pygame.Rect(ix, iy, 34, 34)
                     pygame.draw.rect(surf, (10, 13, 20), ir, border_radius=4)
                     if iid is not None:

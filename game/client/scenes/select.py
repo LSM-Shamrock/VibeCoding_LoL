@@ -16,7 +16,7 @@ KEYS = ("Q", "W", "E", "R")
 SKILL_PANEL = pygame.Rect(24, 548, WIDTH - 48, 150)
 ICON = 64                                       # 스킬 아이콘 크기
 SPELL_SIZE = 44                                 # 소환사 주문 칸 크기
-SPELL_PANEL = pygame.Rect(WIDTH // 2 - 84, 416, 168, 78)
+SPELL_PANEL = pygame.Rect(WIDTH // 2 - 90, 416, 180, 78)
 class _PreviewEnt:
     """미리보기용 위치 정보 (절차적 리그의 update 에 넘긴다)."""
     x = 0.0
@@ -43,8 +43,8 @@ class SelectScene(Scene):
         self.btn_lock = ui.Button((WIDTH // 2 - 120, 498, 240, 46), "확정", self.lock, color=(40, 130, 80), size=20)
         # 소환사 주문 두 칸 (D / F). 챔피언을 확정한 뒤에도 게임이 시작되기 전까지 바꿀 수 있다. 칸을 누르면 고를 수 있는 주문 목록이 열린다 — 고른 주문은 이 PC 의 설정으로 저장된다
         cx = WIDTH // 2
-        self.spell_rects = {"D": pygame.Rect(cx - 56, 444, SPELL_SIZE, SPELL_SIZE),
-                            "F": pygame.Rect(cx + 12, 444, SPELL_SIZE, SPELL_SIZE)}
+        self.spell_rects = {"D": pygame.Rect(cx - 68, 444, SPELL_SIZE, SPELL_SIZE),
+                            "F": pygame.Rect(cx + 24, 444, SPELL_SIZE, SPELL_SIZE)}
         self.swap_rect = pygame.Rect(cx - 11, 455, 22, 22)     # 두 칸 사이: 누르면 D/F 주문 자리를 맞바꾼다
         self.picking = None             # 주문 목록이 열려 있는 칸 ("D" / "F")
         self.picker_rects = []          # [(주문 id, rect)]
@@ -300,7 +300,6 @@ class SelectScene(Scene):
         self.draw_swap(surf, mouse)
         if self.swap_rect.collidepoint(mouse) and not self.picking:
             tooltip = None
-            ui.text(surf, "D / F 자리 바꾸기", (cx, SPELL_PANEL.top - 14), 13, ui.GOLD, anchor="center")
         self.picker_rects = []
         if self.picking:
             tooltip = self.draw_picker(surf, mouse) or tooltip

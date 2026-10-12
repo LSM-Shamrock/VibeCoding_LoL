@@ -53,18 +53,13 @@ def buy_plan(owned, iid):
 
 
 def is_boots(iid):
-    """신발류(기본 신발 + 그 상위 신발)인가. 신발은 하나만 살 수 있고 인벤토리와 따로 한 칸을 쓴다."""
+    """신발류(기본 신발 + 그 상위 신발)인가. 신발은 하나만 살 수 있다."""
     return bool(items().get(iid, {}).get("boots"))
-
-
-def regular_count(owned):
-    """신발을 뺀 일반 아이템 개수 (인벤토리 8칸을 차지하는 것)."""
-    return sum(1 for i in owned if not is_boots(i))
 
 
 def can_buy(owned, iid, slots):
     """(살 수 있는가, 재료 목록, 가격, 이유). 신발은 이미 하나 가졌으면 그 신발을 재료로 쓰는 상위 신발만 살 수 있다.
-    일반 아이템은 재료로 빠지는 것을 빼고 slots 칸이 남아 있어야 한다."""
+    신발도 인벤토리 한 칸을 차지하므로, 재료로 빠지는 것을 빼고 slots 칸이 남아 있어야 한다."""
     if iid not in items():
         return False, [], 0, "없는 아이템"
     used, price = buy_plan(owned, iid)
@@ -72,9 +67,8 @@ def can_buy(owned, iid, slots):
         have = [i for i in owned if is_boots(i)]
         if have and not any(b in used for b in have):
             return False, used, price, "신발은 하나만 살 수 있습니다"
-    else:
-        if regular_count(owned) - sum(1 for u in used if not is_boots(u)) >= slots:
-            return False, used, price, "인벤토리가 가득 찼습니다"
+    if len(owned) - len(used) >= slots:
+        return False, used, price, "인벤토리가 가득 찼습니다"
     return True, used, price, ""
 
 

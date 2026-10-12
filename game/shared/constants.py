@@ -45,7 +45,8 @@ RELIC_HEAL_PCT = 0.15
 RELIC_RADIUS = 1.0
 
 # ---- 시야 (롤 100 유닛 = 1) ----
-SIGHT = {"champion": 12.0, "minion": 10.0, "turret": 13.0, "inhibitor": 8.0, "nexus": 10.0, "fountain": 14.0}
+SIGHT = {"champion": 12.0, "minion": 10.0, "turret": 13.0, "inhibitor": 8.0, "nexus": 10.0, "fountain": 14.0,
+         "cocoon": 3.0}
 
 # ---- 포탑 방패(골드) ----
 TURRET_PLATES = 5         # 포탑 체력을 5칸으로 나눠 한 칸 깎일 때마다 근처 적 챔피언에게 골드
