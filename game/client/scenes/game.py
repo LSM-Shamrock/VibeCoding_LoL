@@ -351,6 +351,8 @@ class GameScene(Scene):
         self.minimap_drag = False   # 미니맵을 좌클릭한 채로 끌면 카메라 이동
         self.rmb_minimap = False    # 미니맵을 우클릭한 채로 있으면 계속 이동 명령
         self.shop_rects = []
+        self.shop_buy_rect = None      # 상점 오른쪽 구매 버튼
+        self.shop_sel = None           # 상점에서 고른 아이템 (오른쪽에 표시)
         self.levelup_rects = []
         self.hud_inv_rects = []     # HUD 인벤토리 칸 (상점이 열려 있으면 우클릭 판매)
         self.gold_rect = None       # 골드 글자 (클릭하면 상점 열기/닫기)
@@ -1410,9 +1412,16 @@ class GameScene(Scene):
                 return True
         if self.shop_open:
             if self.shop_panel().collidepoint(pos):
+                # 롤처럼 좌클릭은 고르기만 하고, 오른쪽의 구매 버튼으로 산다 (우클릭은 바로 구매)
+                if self.shop_buy_rect and self.shop_buy_rect.collidepoint(pos):
+                    self.buy_item(self.shop_sel)
+                    return True
                 for iid, rect in self.shop_rects:
                     if rect.collidepoint(pos):
-                        self.buy_item(iid)
+                        if iid != getattr(self, "shop_sel", None):
+                            self.audio.play("ui_select")
+                        self.shop_sel = iid
+                        break
                 return True
         me = self.me
         if self.gold_rect and self.gold_rect.collidepoint(pos) and me:
@@ -1438,7 +1447,9 @@ class GameScene(Scene):
     def shop_right_click(self, pos):
         for iid, rect in self.shop_rects:
             if rect.collidepoint(pos):
+                self.shop_sel = iid
                 self.buy_item(iid)
+                return
 
     def buy_item(self, iid):
         """상점 구매 요청. 신발을 이미 가졌거나 인벤토리가 가득 차면 이유를 알려 주고 보내지 않는다."""
@@ -2848,112 +2859,192 @@ class GameScene(Scene):
 
     # ---- 상점
     def shop_panel(self):
-        return pygame.Rect(WIDTH // 2 - 380, 36, 760, 548)
+        return pygame.Rect(WIDTH // 2 - 480, 36, 960, 548)
 
     def draw_shop(self, surf):
-        """롤식 상점: 왼쪽에 1단계(기본) / 2단계(상위) 아이템, 오른쪽에 고른 아이템의 재료 트리."""
+        """롤식 상점: 왼쪽 신발 칸, 가운데 아이템 목록, 오른쪽 고른 아이템의 정보·조합 트리·구매 버튼.
+
+        좌클릭으로 고르고(오른쪽에 표시) 구매 버튼으로 사며, 우클릭은 바로 산다. 오른쪽 트리의 재료도 같은 방식으로 살 수 있다.
+        """
         me = self.me
         p = self.shop_panel()
         ui.panel(surf, p, (12, 18, 30, 245), ui.BORDER)
         ui.text(surf, "상점", (p.x + 20, p.y + 14), 24, bold=True)
-        can = me and me.get("shop")
+        can = bool(me and me.get("shop"))
         if not can:
             ui.text(surf, "우물 / 사망 시 구매 가능", (p.x + 90, p.y + 22), 14, ui.RED_C)
+        ui.text(surf, "좌클릭: 선택   ·   우클릭: 바로 구매", (p.centerx - 70, p.y + 22), 13, ui.TEXT_DIM, anchor="midtop")
         if me:
             ui.text(surf, f"{me['g']} G", (p.right - 20, p.y + 16), 22, ui.GOLD, anchor="topright", bold=True)
         self.shop_rects = []
+        self.shop_buy_rect = None
         mouse = ui.mouse_pos()
         its = gamedata.items()
         owned = list(me["it"]) if me else []
+        gold = me["g"] if me else 0
         tier1 = [i for i, it in its.items() if it.get("tier", 1) == 1 and not it.get("boots")]
         boots = [i for i, it in its.items() if it.get("boots")]
         tier2 = [i for i, it in its.items() if it.get("tier", 1) >= 2 and not it.get("boots")]
-        cw, ch, gap, cols = 150, 46, 6, 3
-        left = p.x + 16
-        hovered = None
-        y = p.y + 58
-        for title, ids in (("1단계 · 기본 아이템", tier1), ("신발  (하나만 살 수 있고 인벤토리와 따로 한 칸을 씁니다)", boots),
-                           ("2단계 · 상위 아이템  (재료를 가지고 있으면 그만큼 싸집니다)", tier2)):
-            ui.text(surf, title, (left, y), 13, ui.TEXT_DIM)
-            y += 22
-            for k, iid in enumerate(ids):
-                it = its[iid]
-                rect = pygame.Rect(left + (k % cols) * (cw + gap), y + (k // cols) * (ch + gap), cw, ch)
-                allowed, used, price, why = gamedata.can_buy(owned, iid, INVENTORY_SLOTS)
-                affordable = bool(me) and me["g"] >= price and allowed
-                hover = rect.collidepoint(mouse)
-                if hover:
-                    hovered = iid
-                ui.panel(surf, rect, (40, 60, 95, 240) if hover else (22, 32, 50, 230),
-                         ui.HIGHLIGHT if hover else ui.BORDER, radius=5)
-                draw_item(surf, iid, (rect.x + 6, rect.y + 5, 36, 36))
-                ui.text(surf, it["name"], (rect.x + 48, rect.y + 5), 13, ui.TEXT if affordable else ui.TEXT_DIM, bold=True)
-                pc = ui.GOLD if affordable else (150, 110, 90)
-                ui.text(surf, f"{price} G", (rect.x + 48, rect.y + 25), 13, pc)
-                if not allowed:
-                    ui.text(surf, "보유 중" if it.get("boots") else "가득 참", (rect.right - 6, rect.y + 26), 11, (230, 120, 100),
-                            anchor="topright", shadow=False)
-                elif used:
-                    ui.text(surf, f"재료 {len(used)}/{len(it['from'])}", (rect.right - 6, rect.y + 26), 11, (120, 220, 140),
-                            anchor="topright", shadow=False)
-                self.shop_rects.append((iid, rect))
-            y += ((len(ids) + cols - 1) // cols) * (ch + gap) + 6
-        if hovered:
-            self.shop_sel = hovered
-        sel = getattr(self, "shop_sel", None) or tier2[0]
-        self.draw_shop_tree(surf, pygame.Rect(left + cols * (cw + gap) + 8, p.y + 52, p.right - (left + cols * (cw + gap) + 8) - 14,
-                                              p.height - 66), sel, owned)
+        if getattr(self, "shop_sel", None) not in its:
+            self.shop_sel = tier2[0] if tier2 else next(iter(its))
+        sel = self.shop_sel
+        top = p.y + 56
 
-    def draw_shop_tree(self, surf, area, iid, owned):
-        """고른 아이템: 능력치, 필요한 재료(가진 건 초록 체크), 이 아이템이 재료로 들어가는 상위 아이템."""
+        # 왼쪽: 신발 (하나만 살 수 있다)
+        bx = pygame.Rect(p.x + 14, top, 196, p.bottom - top - 14)
+        ui.panel(surf, bx, (16, 24, 40, 235), (60, 75, 105), radius=6)
+        ui.text(surf, "신발", (bx.x + 12, bx.y + 10), 15, ui.GOLD, bold=True)
+        ui.text(surf, "하나만 · 따로 한 칸", (bx.right - 10, bx.y + 13), 11, ui.TEXT_DIM, anchor="topright")
+        y = bx.y + 38
+        for iid in boots:
+            rect = pygame.Rect(bx.x + 8, y, bx.width - 16, 50)
+            self.draw_shop_entry(surf, rect, iid, owned, gold, mouse, sel, row=True)
+            y += 56
+
+        # 가운데: 아이템 목록 (아이콘 + 가격)
+        mid = pygame.Rect(bx.right + 10, top, 408, p.bottom - top - 14)
+        ui.panel(surf, mid, (16, 24, 40, 235), (60, 75, 105), radius=6)
+        cell_w, cell_h, cols = 66, 84, 6
+        y = mid.y + 10
+        for title, ids in (("기본 아이템", tier1), ("상위 아이템", tier2)):
+            ui.text(surf, title, (mid.x + 12, y), 15, ui.GOLD, bold=True)
+            y += 28
+            for k, iid in enumerate(ids):
+                rect = pygame.Rect(mid.x + 6 + (k % cols) * cell_w, y + (k // cols) * cell_h, cell_w - 4, cell_h - 6)
+                self.draw_shop_entry(surf, rect, iid, owned, gold, mouse, sel)
+            y += ((len(ids) + cols - 1) // cols) * cell_h + 12
+
+        # 오른쪽: 고른 아이템
+        area = pygame.Rect(mid.right + 10, top, p.right - mid.right - 24, p.bottom - top - 14)
+        self.draw_shop_detail(surf, area, sel, owned, gold, can, mouse)
+
+        # 마우스를 올린 아이템 이름
+        hov = next((iid for iid, r in self.shop_rects if r.collidepoint(mouse)), None)
+        if hov and hov != sel:
+            ui.text(surf, its[hov]["name"], (mouse[0] + 14, mouse[1] + 18), 14, ui.TEXT)
+
+    def draw_shop_entry(self, surf, rect, iid, owned, gold, mouse, sel, row=False):
+        """상점의 아이템 칸 하나. row=True 면 아이콘 + 이름 + 가격 한 줄, 아니면 아이콘 + 가격."""
+        it = gamedata.items()[iid]
+        allowed, used, price, _why = gamedata.can_buy(owned, iid, INVENTORY_SLOTS)
+        ok = allowed and gold >= price
+        hover = rect.collidepoint(mouse)
+        chosen = iid == sel
+        bg = (50, 74, 115, 245) if chosen else ((36, 52, 82, 240) if hover else (22, 32, 50, 230))
+        ui.panel(surf, rect, bg, ui.GOLD if chosen else (ui.HIGHLIGHT if hover else ui.BORDER), radius=5)
+        size = 38 if row else 48
+        ir = pygame.Rect(0, 0, size, size)
+        if row:
+            ir.midleft = (rect.x + 6, rect.centery)
+        else:
+            ir.midtop = (rect.centerx, rect.y + 6)
+        draw_item(surf, iid, ir)
+        if not ok:
+            dim = pygame.Surface(ir.size, pygame.SRCALPHA)
+            dim.fill((0, 0, 0, 110))
+            surf.blit(dim, ir.topleft)
+        pc = ui.GOLD if ok else (150, 110, 90)
+        if row:
+            ui.text(surf, it["name"], (ir.right + 8, rect.y + 7), 13, ui.TEXT if ok else ui.TEXT_DIM, bold=True)
+            ui.text(surf, f"{price} G", (ir.right + 8, rect.y + 27), 13, pc)
+            if not allowed:
+                ui.text(surf, "보유 중", (rect.right - 6, rect.y + 28), 11, (230, 120, 100), anchor="topright", shadow=False)
+        else:
+            ui.text(surf, f"{price}", (rect.centerx, ir.bottom + 5), 13, pc, anchor="midtop")
+        if used and allowed:                       # 가진 재료가 쓰인다 (그만큼 싸짐)
+            pygame.draw.circle(surf, (110, 220, 130), (ir.right - 4, ir.y + 4), 4)
+        self.shop_rects.append((iid, rect))
+
+    def draw_shop_detail(self, surf, area, iid, owned, gold, can, mouse):
+        """고른 아이템: 이름·가격·능력치, 조합 트리(재료도 고르거나 우클릭으로 바로 살 수 있다), 상위 아이템, 구매 버튼."""
         its = gamedata.items()
         it = its[iid]
         ui.panel(surf, area, (16, 24, 40, 235), (60, 75, 105), radius=6)
         x, y = area.x + 12, area.y + 12
-        draw_item(surf, iid, (x, y, 44, 44))
-        ui.text(surf, it["name"], (x + 54, y + 2), 16, ui.GOLD, bold=True)
-        used, price = gamedata.buy_plan(owned, iid)
-        ui.text(surf, f"총 {it['cost']} G", (x + 54, y + 26), 13, ui.TEXT_DIM)
-        y += 54
+        draw_item(surf, iid, (x, y, 52, 52))
+        ui.text(surf, it["name"], (x + 62, y + 4), 17, ui.GOLD, bold=True)
+        allowed, used, price, why = gamedata.can_buy(owned, iid, INVENTORY_SLOTS)
+        cost_txt = f"{price} G" + (f"  (총 {it['cost']} G)" if price != it["cost"] else "")
+        ui.text(surf, cost_txt, (x + 62, y + 30), 14, ui.GOLD if gold >= price else (200, 130, 110))
+        y += 62
         for line in ui.wrap(item_stat_text(it), 13, area.width - 24):
             ui.text(surf, line, (x, y), 13, ui.TEXT)
             y += 18
-        y += 8
+        y += 10
+
+        # 조합 트리: 위에 이 아이템, 아래에 재료 (가진 재료는 초록 테두리)
         comps = it.get("from", [])
         if comps:
-            ui.text(surf, "필요한 재료", (x, y), 13, ui.TEXT_DIM)
+            pygame.draw.line(surf, (60, 75, 105), (area.x + 10, y), (area.right - 10, y))
+            y += 10
+            ui.text(surf, "조합", (x, y), 13, ui.TEXT_DIM)
             y += 22
-            left = list(owned)
-            slot_w = 48
+            s_top, s_c = 44, 40
+            top_r = pygame.Rect(0, 0, s_top, s_top)
+            top_r.midtop = (area.centerx, y)
+            self.draw_tree_node(surf, top_r, iid, iid in owned, mouse, iid)
+            n = len(comps)
+            gap = 16
+            total = n * s_c + (n - 1) * gap
+            cy = top_r.bottom + 34
+            mid_y = top_r.bottom + 16
+            pygame.draw.line(surf, (90, 100, 130), (top_r.centerx, top_r.bottom), (top_r.centerx, mid_y), 2)
+            left_items = list(owned)
             for k, c in enumerate(comps):
-                have = c in left
+                r = pygame.Rect(area.centerx - total // 2 + k * (s_c + gap), cy, s_c, s_c)
+                have = c in left_items
                 if have:
-                    left.remove(c)
-                r = pygame.Rect(x + k * (slot_w + 6), y, slot_w, slot_w)
-                pygame.draw.rect(surf, (28, 42, 30) if have else (30, 30, 40), r.inflate(6, 6), border_radius=5)
-                pygame.draw.rect(surf, (90, 210, 110) if have else (80, 85, 105), r.inflate(6, 6), 1, border_radius=5)
-                draw_item(surf, c, r.inflate(-4, -4))
-                if not have:
-                    shade = pygame.Surface(r.size, pygame.SRCALPHA)
-                    shade.fill((0, 0, 0, 120))
-                    surf.blit(shade, r.topleft)
-                ui.text(surf, f"{its[c]['cost']}", (r.centerx, r.bottom + 6), 11, ui.GOLD if not have else (120, 220, 140),
-                        anchor="midtop", shadow=False)
-            y += slot_w + 26
-            ui.text(surf, f"조합 비용 {it['cost'] - sum(its[c]['cost'] for c in comps)} G", (x, y), 13, ui.TEXT_DIM)
-            y += 20
-            ui.text(surf, f"지금 사려면 {price} G", (x, y), 15, ui.GOLD, bold=True)
-        else:
-            ups = gamedata.upgrades_of(iid)
-            ui.text(surf, "만들 수 있는 상위 아이템", (x, y), 13, ui.TEXT_DIM)
+                    left_items.remove(c)
+                pygame.draw.line(surf, (90, 100, 130), (r.centerx, mid_y), (r.centerx, r.top), 2)
+                pygame.draw.line(surf, (90, 100, 130), (top_r.centerx, mid_y), (r.centerx, mid_y), 2)
+                self.draw_tree_node(surf, r, c, have, mouse, iid)
+                ui.text(surf, f"{its[c]['cost']}", (r.centerx, r.bottom + 4), 12,
+                        (120, 220, 140) if have else ui.GOLD, anchor="midtop", shadow=False)
+            y = cy + s_c + 26
+
+        # 이 아이템이 재료로 들어가는 상위 아이템
+        ups = gamedata.upgrades_of(iid)
+        if ups:
+            pygame.draw.line(surf, (60, 75, 105), (area.x + 10, y), (area.right - 10, y))
+            y += 10
+            ui.text(surf, "상위 아이템", (x, y), 13, ui.TEXT_DIM)
             y += 22
-            for u in ups:
-                r = pygame.Rect(x, y, 28, 28)
-                draw_item(surf, u, r)
-                ui.text(surf, its[u]["name"], (x + 36, y + 6), 13, ui.TEXT)
-                y += 32
-            if not ups:
-                ui.text(surf, "없음", (x, y), 13, ui.TEXT_DIM)
+            for k, u in enumerate(ups):
+                r = pygame.Rect(x + 3 + (k % 5) * 50, y + 3 + (k // 5) * 50, 38, 38)
+                self.draw_tree_node(surf, r, u, False, mouse, iid)
+            y += ((len(ups) + 4) // 5) * 50
+
+        # 구매 버튼
+        btn = pygame.Rect(area.x + 12, area.bottom - 58, area.width - 24, 46)
+        ok = can and allowed and gold >= price
+        hover = btn.collidepoint(mouse)
+        col = ((60, 150, 90) if hover else (44, 124, 72)) if ok else (48, 52, 64)
+        pygame.draw.rect(surf, col, btn, border_radius=6)
+        pygame.draw.rect(surf, ui.HIGHLIGHT if ok and hover else ui.BORDER, btn, 1, border_radius=6)
+        ui.text(surf, f"구매   {price} G", btn.center, 18, ui.TEXT if ok else ui.TEXT_DIM, anchor="center", bold=True)
+        if not allowed:
+            note = why
+        elif not can:
+            note = "우물에 있거나 죽었을 때만 살 수 있습니다"
+        elif gold < price:
+            note = f"{price - gold} G 부족"
+        else:
+            note = ""
+        if note:
+            ui.text(surf, note, (btn.centerx, btn.y - 8), 12, (230, 130, 110), anchor="midbottom", shadow=False)
+        self.shop_buy_rect = btn
+
+    def draw_tree_node(self, surf, r, iid, have, mouse, sel):
+        """조합 트리 / 상위 아이템 칸 (누르면 그 아이템을 고르고, 우클릭하면 바로 산다)."""
+        hover = r.collidepoint(mouse)
+        border = ui.GOLD if iid == sel else ((90, 210, 110) if have else (ui.HIGHLIGHT if hover else (80, 85, 105)))
+        pygame.draw.rect(surf, (30, 34, 46), r.inflate(6, 6), border_radius=5)
+        pygame.draw.rect(surf, border, r.inflate(6, 6), 2 if hover or iid == sel or have else 1, border_radius=5)
+        draw_item(surf, iid, r)
+        if have:
+            pygame.draw.circle(surf, (90, 210, 110), (r.right - 2, r.y + 2), 6)
+            pygame.draw.lines(surf, (12, 30, 16), False, [(r.right - 5, r.y + 2), (r.right - 3, r.y + 4), (r.right + 1, r.y - 1)], 2)
+        self.shop_rects.append((iid, r))
 
     # ---- 점수판
     def draw_scoreboard(self, surf):
