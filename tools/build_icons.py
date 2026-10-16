@@ -42,7 +42,7 @@ SKILLS = {
 
 # 소환사 주문 이름 -> (아이콘, 배경 색)
 SPELLS = {
-    "flash": ("lorc/teleport", (235, 200, 70)),
+    "flash": ("@flash_blink", (235, 200, 70)),
     "mark": ("lorc/frozen-orb", (110, 190, 245)),
     "heal": ("sbed/health-increase", (90, 210, 120)),
     "ghost": ("lorc/ghost", (150, 170, 230)),
@@ -142,7 +142,43 @@ def serpent_dive(src, size, color):
     return im.resize((size, size), Image.LANCZOS)
 
 
-COMPOSED = {"@spider_leap": spider_leap, "@serpent_dive": serpent_dive}
+def flash_blink(src, size, color):
+    """점멸: 왼쪽 아래에서 오른쪽 위로 순식간에 옮겨 가는 그림 (번쩍이는 별 + 뒤에 남는 빛줄기, 전부 직접 그림)."""
+    import math
+    from PIL import Image, ImageDraw
+    k = 3
+    S = size * k
+    im = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    c = (*color, 255)
+
+    def star(cx, cy, R, r, rot, fill):
+        pts = []
+        for i in range(8):
+            a = rot + i * math.pi / 4
+            rr = R if i % 2 == 0 else r
+            pts.append((cx + math.cos(a) * rr, cy + math.sin(a) * rr))
+        d.polygon(pts, fill=fill)
+
+    # 빛줄기: 떠난 자리(왼쪽 아래)에서 도착한 별 쪽으로 갈수록 굵어지는 세 줄
+    ex, ey = 0.66 * S, 0.34 * S
+    ang = math.atan2(ey - 0.86 * S, ex - 0.14 * S)
+    ux, uy = math.cos(ang), math.sin(ang)
+    nx, ny = -uy, ux
+    for off, l0, l1, w in ((0.0, 0.10, 0.50, 0.050), (0.11, 0.20, 0.44, 0.030), (-0.11, 0.20, 0.44, 0.030)):
+        sx, sy = 0.14 * S + nx * off * S, 0.86 * S + ny * off * S
+        ax, ay = sx + ux * l0 * S, sy + uy * l0 * S
+        bx, by = sx + ux * (l0 + l1) * S, sy + uy * (l0 + l1) * S
+        hw = w * S / 2
+        d.polygon([(ax, ay), (bx + nx * hw, by + ny * hw), (bx - nx * hw, by - ny * hw)], fill=c)
+    # 떠난 자리의 작은 반짝임, 도착한 자리의 큰 별 (뒤에 45도 돌린 작은 별을 겹친다)
+    star(0.16 * S, 0.84 * S, 0.09 * S, 0.025 * S, 0.0, c)
+    star(ex, ey, 0.25 * S, 0.06 * S, math.pi / 4, c)
+    star(ex, ey, 0.36 * S, 0.075 * S, 0.0, c)
+    return im.resize((size, size), Image.LANCZOS)
+
+
+COMPOSED = {"@spider_leap": spider_leap, "@serpent_dive": serpent_dive, "@flash_blink": flash_blink}
 
 
 def tile(src, rel, base, gold=False):

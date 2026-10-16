@@ -56,10 +56,12 @@ IH = _at(0.434)                 # 날개막 뒤쪽이 붙는 마디
 IFL = _at(0.229)                # 앞다리
 IHL = _at(0.37)                 # 뒷다리
 KC = (IFL + IHL) // 2           # 챔피언 위치(가슴 한가운데)에 놓이는 마디
-TAIL_TURN0 = 12.0               # 뒷다리 바로 뒤 꼬리 마디가 지나온 길의 방향으로 돌아서는 빠르기 (1/초)
-TAIL_TURN1 = 2.2                # ... 꼬리 끝은 이만큼만 (낮을수록 빙빙 돌 때 꼬리가 묵직하게 늦게 돈다)
-TAIL_BEND = math.radians(1.6)   # 꼬리가 마디 하나에서 꺾일 수 있는 최대 각도 (작을수록 빳빳해 작게 말리지 않는다)
+TAIL_TURN0 = 14.0               # 가슴 바로 뒤 마디가 지나온 길의 방향으로 돌아서는 빠르기 (1/초)
+TAIL_TURN1 = 4.0                # ... 꼬리 끝은 이만큼 (낮을수록 빙빙 돌 때 꼬리가 늦게 돈다)
+BODY_BEND = math.radians(2.2)   # 가슴~뒷다리 몸통이 마디 하나에서 꺾일 수 있는 최대 각도 (작을수록 확 꺾이지 않는다)
+TAIL_BEND = math.radians(5.0)   # 꼬리는 이만큼까지 (몸통보다 부드럽게 휜다)
 NR = IHL + int(round((NR_FULL - 1 - IHL) * TAIL_K)) + 1       # 뒷다리 뒤의 꼬리만 TAIL_K 배로 줄인다
+_BENDS = np.where(np.arange(NR - 1) < IHL, BODY_BEND, TAIL_BEND)       # 마디 사이(k -> k+1)마다 꺾일 수 있는 최대 각도
 BODY_LEN = (NR - 1) * DS
 CAP = int(math.ceil((BODY_LEN + 30) / TS))
 
@@ -579,8 +581,8 @@ class DragonAnim:
         H = np.concatenate([[0.0], np.cumsum(step[KC:])])                    # 가슴 뒤쪽: 지나온 길을 따라간다
         X[KC:] = np.interp(H, cum, pts[:, 0])
         Z[KC:] = np.interp(H, cum, pts[:, 1])
-        # 뒷다리 뒤 꼬리: 밧줄처럼 끌려가며 끝으로 갈수록 늦게 따라온다 (빙빙 돌아도 길을 따라 꼬이지 않게)
-        X, Z, self.tail_ang = heavy_chain(self.tail_ang, X, Z, IHL + 1, dt, TAIL_TURN0, TAIL_TURN1, TAIL_BEND)
+        # 가슴 뒤 몸통·꼬리: 끝으로 갈수록 늦게 돌아서고, 몸통은 빳빳해서 확 꺾이지 않으며 꼬리는 그보다 부드럽게 휜다
+        X, Z, self.tail_ang = heavy_chain(self.tail_ang, X, Z, KC + 1, dt, TAIL_TURN0, TAIL_TURN1, _BENDS)
         # 머리를 앞으로 뻗기 (물어뜯기): 머리 쪽 마디일수록 많이 끌려 나온다
         ex = c['ext']
         if abs(ex) > 1e-3:

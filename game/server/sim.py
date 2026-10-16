@@ -630,6 +630,8 @@ class Simulation:
                 self.sell(c, int(msg["slot"]))
             elif cmd == "undo":
                 self.undo(c)
+            elif cmd == "swap":
+                self.swap_items(c, int(msg["a"]), int(msg["b"]))
             elif c.dead:
                 return
             elif cmd == "move":
@@ -711,6 +713,16 @@ class Simulation:
         c.gold += refund
         c.undo.append({"items": before, "gold": -refund})
         c.recompute_stats(self.time)
+
+    def swap_items(self, c, a, b):
+        """인벤토리 자리 바꾸기 (언제든 가능). b 가 빈 칸이면 a 의 아이템을 맨 뒤 칸으로 옮긴다."""
+        n = len(c.items)
+        if not (0 <= a < n) or not (0 <= b < INVENTORY_SLOTS) or a == b:
+            return
+        if b < n:
+            c.items[a], c.items[b] = c.items[b], c.items[a]
+        else:
+            c.items.append(c.items.pop(a))
 
     def undo(self, c):
         """상점 되돌리기: 마지막 구매·판매를 없던 일로 (아이템과 골드를 그 전으로)."""

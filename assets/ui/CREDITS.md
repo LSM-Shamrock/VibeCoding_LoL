@@ -58,7 +58,7 @@
 
 | 주문 | 아이콘 (작가) |
 |---|---|
-| 점멸 (`flash`) | [teleport](https://game-icons.net/1x1/lorc/teleport.html) — Lorc |
+| 점멸 (`flash`) | 직접 그림 (`tools/build_icons.py` 의 `flash_blink`: 번쩍이는 별 + 빛줄기) |
 | 표식 (`mark`) | [frozen-orb](https://game-icons.net/1x1/lorc/frozen-orb.html) — Lorc |
 | 회복 (`heal`) | [health-increase](https://game-icons.net/1x1/sbed/health-increase.html) — sbed |
 | 유체화 (`ghost`) | [ghost](https://game-icons.net/1x1/lorc/ghost.html) — Lorc |

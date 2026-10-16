@@ -189,8 +189,8 @@ def heavy_chain(state, tx, tz, start, dt, rate_head, rate_tail, max_bend=None):
     """긴 몸(이무기 몸통·용 꼬리)을 묵직하게 끌고 다닌다.
     start 앞의 마디는 목표 자리(머리가 지나온 길)에 그대로 두고, 그 뒤는 마디마다 방향(앞 마디 -> 이 마디)을 들고 있다가
     목표 모양의 방향 쪽으로 rate_head(start 마디) ~ rate_tail(꼬리 끝) 의 빠르기(1/초)로만 돌린다. 위치는 앞 마디에서
-    그 방향으로 목표 모양의 간격만큼 이어 붙인다. max_bend(rad) 가 있으면 앞 마디와 꺾이는 각도도 그 이하로 묶어
-    몸이 빳빳해진다. 그래서 빙빙 돌아도 꼬리가 길을 그대로 따라 작게 꼬이지 않고, 늦게 묵직하게 돈다.
+    그 방향으로 목표 모양의 간격만큼 이어 붙인다. max_bend(rad, 숫자 하나 또는 마디 사이마다의 배열)가 있으면
+    앞 마디와 꺾이는 각도도 그 이하로 묶어 몸이 빳빳해진다. 그래서 빙빙 돌아도 꼬리가 길을 그대로 따라 작게 꼬이지 않고, 늦게 묵직하게 돈다.
     state: 지난 프레임의 마디 방향 배열 (없으면 None). 반환: (x, z, 새 방향 배열)."""
     n = len(tx)
     start = max(1, min(n, start))
@@ -215,12 +215,14 @@ def heavy_chain(state, tx, tz, start, dt, rate_head, rate_tail, max_bend=None):
         ang[s0:] = a + 0.25 * (dl + dr)
     if max_bend is not None and s0 > 0:
         al = ang.tolist()
+        mbl = np.broadcast_to(np.asarray(max_bend, dtype=float), (n - 1,)).tolist()
         for j in range(s0, n - 1):
             rel = (al[j] - al[j - 1] + math.pi) % (2 * math.pi) - math.pi
-            if rel > max_bend:
-                al[j] = al[j - 1] + max_bend
-            elif rel < -max_bend:
-                al[j] = al[j - 1] - max_bend
+            mb = mbl[j]
+            if rel > mb:
+                al[j] = al[j - 1] + mb
+            elif rel < -mb:
+                al[j] = al[j - 1] - mb
         ang = np.array(al)
     x, z = tx.copy(), tz.copy()
     cx, cz = np.cos(ang[s0:]) * seg[s0:], np.sin(ang[s0:]) * seg[s0:]
