@@ -25,11 +25,11 @@ from ..champ_anim import DEATH_FADE, DEATH_SHOW
 from ..geometry import MeshBuilder
 from ..gl import Mesh, facing_to_rot
 from .spider import _T, _S, _Rx, _Ry, _Rz, _euler, _from_to, _hex, _wrap, _xf, heavy_chain
-from . import CHAMP_SCALE
+from . import BIG_SCALE, CHAMP_SCALE
 
 PI = math.pi
 TAU = PI * 2
-SC = 0.20 * CHAMP_SCALE         # 보스 단위 -> 이 게임 단위
+SC = 0.20 * CHAMP_SCALE * BIG_SCALE      # 보스 단위 -> 이 게임 단위
 BODY_LEN = 34.0                 # 머리 중심에서 꼬리 끝까지 (원본 242 를 이 게임 크기로 줄임)
 BODY_R = 1.65                   # 몸통 가장 굵은 곳의 반지름
 HS = 1.35                       # 머리 크기 배율
@@ -467,8 +467,8 @@ class _Debris:
 
 class SerpentAnim:
     is_rig = True
-    bar_h = 3.4 * CHAMP_SCALE + 0.2                             # 게임 장면이 체력바를 달 높이 (세운 머리 위)
-    pick_h = 2.8 * CHAMP_SCALE                                 # 마우스로 고를 수 있는 높이
+    bar_h = 3.4 * CHAMP_SCALE * BIG_SCALE + 0.2                             # 게임 장면이 체력바를 달 높이 (세운 머리 위)
+    pick_h = 2.8 * CHAMP_SCALE * BIG_SCALE                                 # 마우스로 고를 수 있는 높이
 
     def __init__(self, assets):
         self.a = assets

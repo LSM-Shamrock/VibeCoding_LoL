@@ -79,6 +79,8 @@ class App:
         pygame.display.gl_set_attribute(pygame.GL_CONTEXT_PROFILE_MASK, pygame.GL_CONTEXT_PROFILE_CORE)
         pygame.display.gl_set_attribute(pygame.GL_MULTISAMPLEBUFFERS, 1)
         pygame.display.gl_set_attribute(pygame.GL_MULTISAMPLESAMPLES, 4)
+        # 깊이 버퍼 24비트: 기본(16비트)이면 바닥 바로 위에 깐 그림자·고리가 바닥과 겹쳐 가로 줄무늬로 깜빡인다
+        pygame.display.gl_set_attribute(pygame.GL_DEPTH_SIZE, 24)
         try:
             self.screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.OPENGL | pygame.DOUBLEBUF)
         except pygame.error:

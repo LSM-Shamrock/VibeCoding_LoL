@@ -128,6 +128,18 @@ void main() {
 }
 """
 
+# UI 표면(pygame, 위아래가 뒤집힌 BGRA 그대로)을 받아 위아래를 바로잡고 미리 곱한 알파로 바꾸는 패스
+PREMUL_FS = """
+#version 330
+uniform sampler2D u_tex;
+in vec2 v_uv;
+out vec4 f_color;
+void main() {
+    vec4 c = texture(u_tex, vec2(v_uv.x, 1.0 - v_uv.y));
+    f_color = vec4(c.rgb * c.a, c.a);
+}
+"""
+
 OVERLAY_FS = """
 #version 330
 uniform sampler2D u_tex;
@@ -275,7 +287,7 @@ class Camera:
 
     def update(self):
         self.view = look_at(self.eye(), (self.tx, self.ty, self.tz))
-        self.proj = perspective(self.fov, self.width / self.height, 0.5, 300.0)
+        self.proj = perspective(self.fov, self.width / self.height, 1.0, 300.0)      # 가까운 면을 너무 당기면 깊이 정밀도가 떨어져 바닥 그림자가 깜빡인다
         self.vp = self.proj @ self.view
         self.inv_vp = np.linalg.inv(self.vp)
 
@@ -317,6 +329,7 @@ class Renderer:
             prog["u_tex"].value = 0
             prog["u_soft"].value = False
             prog["u_dbl"].value = False
+        self._uni = {}                      # id(프로그램) -> ({유니폼 이름: 핸들}, {지난번 값})
         self._ident_bones = np.tile(np.eye(4, dtype="f4").T.reshape(-1), MAX_BONES).tobytes()
         self.camera = Camera(width, height)
         self._white = ctx.texture((1, 1), 4, b"\xff\xff\xff\xff")
@@ -350,6 +363,8 @@ class Renderer:
         self.overlay.end(scaled=abs(self.scale - 1.0) > 1e-3)
 
     def begin_3d(self, camera=None, clear=(0.01, 0.012, 0.03), sky=True):
+        for _u, last in self._uni.values():
+            last.clear()                    # 다른 곳에서 유니폼을 바꿨을 수도 있으니 프레임마다 처음엔 다시 쓴다
         cam = camera or self.camera
         cam.update()
         self.ctx.viewport = (0, 0, *self.window_size)
@@ -389,17 +404,30 @@ class Renderer:
         if self.y_offset:
             model = model.copy()
             model[1, 3] += self.y_offset            # 리그 챔피언 에어본 등: 그리는 전체를 위로 띄운다
-        prog["u_model"].write(gl_bytes(model))
-        prog["u_tint"].value = tuple(tint) if len(tint) == 4 else (*tint, 1.0)
-        prog["u_emissive"].value = tuple(emissive)
-        prog["u_unlit"].value = float(unlit)
-        prog["u_soft"].value = bool(soft)
+        # 유니폼 핸들은 프로그램마다 한 번만 찾아 두고, 값이 지난번과 같으면 다시 쓰지 않는다 (그리기 호출이 많아 꽤 아낀다)
+        U = self._uni.get(id(prog))
+        if U is None:
+            U = self._uni[id(prog)] = ({n: prog[n] for n in ("u_model", "u_tint", "u_emissive", "u_unlit", "u_soft", "u_use_tex")}, {})
+        uni, last = U
+        uni["u_model"].write(gl_bytes(model))
+        t4 = (float(tint[0]), float(tint[1]), float(tint[2]), float(tint[3]) if len(tint) == 4 else 1.0)
+        if last.get("t") != t4:
+            uni["u_tint"].value = last["t"] = t4
+        em = (float(emissive[0]), float(emissive[1]), float(emissive[2]))
+        if last.get("e") != em:
+            uni["u_emissive"].value = last["e"] = em
+        ul = float(unlit)
+        if last.get("l") != ul:
+            uni["u_unlit"].value = last["l"] = ul
+        sf = bool(soft)
+        if last.get("s") != sf:
+            uni["u_soft"].value = last["s"] = sf
         for vao, vbo, tex in mesh.parts:
-            if tex is not None:
+            ut = tex is not None
+            if ut:
                 tex.use(0)
-                prog["u_use_tex"].value = True
-            else:
-                prog["u_use_tex"].value = False
+            if last.get("x") != ut:
+                uni["u_use_tex"].value = last["x"] = ut
             vao.render(moderngl.TRIANGLES)
 
     def draw_transparent(self, mesh, model, tint, emissive=(0, 0, 0), unlit=1.0, additive=False, bones=None):
@@ -558,6 +586,16 @@ class Overlay:
         quad = np.array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1], dtype="f4")
         self.vbo = ctx.buffer(quad.tobytes())
         self.vao = ctx.vertex_array(self.prog, [(self.vbo, "2f", "in_pos")])
+        # 빠른 길: 표면 메모리(BGRA, 위에서부터)를 복사·변환 없이 그대로 올리고, 순서 바꾸기·위아래 뒤집기·알파 곱하기는 GPU 가 한다
+        self.fast = (self.surface.get_masks() == (0xFF0000, 0xFF00, 0xFF, 0xFF000000)
+                     and self.surface.get_pitch() == width * 4)
+        if self.fast:
+            self.raw = ctx.texture((width, height), 4)
+            self.raw.swizzle = "BGRA"
+            self.raw.filter = (moderngl.NEAREST, moderngl.NEAREST)
+            self.premul_fbo = ctx.framebuffer(color_attachments=[self.texture])
+            self.prog_premul = ctx.program(vertex_shader=OVERLAY_VS, fragment_shader=PREMUL_FS)
+            self.vao_premul = ctx.vertex_array(self.prog_premul, [(self.vbo, "2f", "in_pos")])
 
     def begin(self):
         self.surface.fill((0, 0, 0, 0))
@@ -565,7 +603,18 @@ class Overlay:
 
     def end(self, scaled=False):
         # 확대 표시(전체 화면) 시 글자 가장자리가 검게 번지지 않도록 미리 곱한 알파로 올린다
-        self.texture.write(pygame.image.tobytes(self.surface.premul_alpha(), "RGBA", True))
+        if self.fast:
+            vp, screen = self.ctx.viewport, self.ctx.fbo
+            self.raw.write(self.surface.get_view("0"))
+            self.ctx.disable(moderngl.DEPTH_TEST | moderngl.BLEND)
+            self.premul_fbo.use()
+            self.raw.use(0)
+            self.prog_premul["u_tex"].value = 0
+            self.vao_premul.render(moderngl.TRIANGLES)
+            screen.use()
+            self.ctx.viewport = vp
+        else:
+            self.texture.write(pygame.image.tobytes(self.surface.premul_alpha(), "RGBA", True))
         f = moderngl.LINEAR if scaled else moderngl.NEAREST
         self.texture.filter = (f, f)
         self.ctx.disable(moderngl.DEPTH_TEST)

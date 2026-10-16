@@ -7,6 +7,7 @@
 """
 
 CHAMP_SCALE = 0.8       # 인게임 챔피언 모델 크기 배율 (리그도, 뼈대 모델도 이만큼 줄여 그린다)
+BIG_SCALE = 0.75        # 몸이 아주 큰 리그(용·이무기)는 여기에 이만큼 더 줄인다
 
 
 def make_rig(name, renderer, cache):

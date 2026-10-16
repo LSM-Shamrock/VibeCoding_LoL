@@ -91,6 +91,8 @@ PINGS = {"alert": ("신호", (255, 215, 90)), "danger": ("위험", (255, 80, 70)
          "assist": ("도움 요청", (110, 235, 130)), "missing": ("실종", (255, 190, 60))}
 PING_DIRS = (("danger", 0, -1), ("omw", 1, 0), ("assist", 0, 1), ("missing", -1, 0))     # 끄는 방향 -> 핑 종류
 PING_TIME = 3.0
+CHAT_WHITE = (255, 255, 255)
+TURRET_TOP = 3.2               # 포탑 레이저·포탄이 나가는 높이
 ZOOM_MAX = 22.0                 # 마우스 휠로 멀리 볼 수 있는 한계 (처음 화면)
 MOVE_COLOR = (0.35, 0.65, 1.0)          # 이동 지점 표시 색
 MOVE_COLOR_UI = (110, 175, 255)
@@ -306,6 +308,23 @@ def draw_item(surf, iid, rect, font_size=14):
     ui.text(surf, it["name"][0], rect.center, font_size, (20, 20, 30), anchor="center", bold=True, shadow=False)
 
 
+def beam_matrix(x0, y0, z0, x1, y1, z1, width):
+    """막대 메시(z: 0~1, 단면 1x1)를 (x0,y0,z0) 에서 (x1,y1,z1) 까지 굵기 width 로 늘이는 행렬 (기울기까지 정확히)."""
+    dx, dy, dz = x1 - x0, y1 - y0, z1 - z0
+    length = math.sqrt(dx * dx + dy * dy + dz * dz) or 1e-6
+    fwd = np.array([dx, dy, dz]) / length
+    up = np.array([0.0, 1.0, 0.0]) if abs(fwd[1]) < 0.99 else np.array([1.0, 0.0, 0.0])
+    side = np.cross(up, fwd)
+    side /= np.linalg.norm(side)
+    up2 = np.cross(fwd, side)
+    m = np.eye(4, dtype="f4")
+    m[:3, 0] = side * width
+    m[:3, 1] = up2 * width
+    m[:3, 2] = fwd * length
+    m[:3, 3] = (x0, y0, z0)
+    return m
+
+
 def sell_text(item):
     """판매 가격 글자 (롤 상점처럼 금액과 비율)."""
     return f"판매 {round(item['cost'] * SELL_RATIO)} G ({round(SELL_RATIO * 100)}%)"
@@ -334,6 +353,8 @@ class CEnt:
         self.lift = 0.0             # 공중에 띄워진 높이 (에어본·외줄)
         self.ca = None              # 뼈대 애니메이션 제어기 (챔피언 전용, models.new_champ_anim)
         self.last_swing = -10.0     # 마지막으로 기본 공격 소리를 낸 시각
+        self.ca_dt = 0.0            # 아직 동작 제어기에 넘기지 않은 시간 (화면 밖이면 몰아서 가끔 갱신)
+        self.onscreen = True        # 지난 프레임 카메라 기준으로 화면 안(조금 넉넉히)에 있는가
 
     def set_target(self, x, z, f):
         if math.hypot(x - self.x, z - self.z) > 6.0:      # 순간이동(점멸, 부활 등)
@@ -990,28 +1011,44 @@ class GameScene(Scene):
             prio, name = max(cands)
             self.announce(name, prio)
 
+    # 롤 아나운서 문구 (나무위키 '소환사의 협곡' 아나운서 대사). 연속 처치는 3킬부터 8킬 이상까지
     STREAK_TEXT = {3: "학살 중입니다!", 4: "미쳐 날뛰고 있습니다!", 5: "도저히 막을 수 없습니다!",
-                   6: "전장을 지배하고 있습니다!", 7: "신의 경지에 이르렀습니다!"}
+                   6: "전장의 지배자!", 7: "전장의 화신!", 8: "전설의 출현!"}
+    STREAK_TEXT_ENEMY = {3: "적이 학살 중입니다!", 4: "적이 미쳐 날뛰고 있습니다!", 5: "적을 도저히 막을 수 없습니다!",
+                         6: "적이 전장을 지배하고 있습니다!", 7: "적은 전장의 화신입니다!", 8: "적은 전설적입니다!"}
     MULTI_TEXT = {2: "더블 킬!", 3: "트리플 킬!", 4: "쿼드라 킬!", 5: "펜타 킬!"}
 
+    def team_wiped(self, team, victim):
+        """이번 처치로 team 의 챔피언이 모두 죽었는가 (마무리)."""
+        for cid, info in self.champ_info.items():
+            if info["tm"] != team or cid == victim:
+                continue
+            row = self.board.get(cid)
+            if not (row and row[8]):
+                return False
+        return True
+
     def kill_banner_text(self, ev):
-        """처치 알림 문구 (롤처럼): 멀티킬 > 제압 > 선취점 > 연속 처치 > 기본 문구."""
+        """처치 알림 문구 (롤 아나운서와 같게): 멀티킬 > 마무리 > 제압 > 퍼스트 블러드 > 연속 처치 > 기본 문구."""
         mk, ks = ev.get("mk", 0), ev.get("ks", 0)
+        ally = ev["kt"] == self.my_team
         if mk >= 2:
-            return self.MULTI_TEXT.get(mk, "펜타 킬!")
+            text = self.MULTI_TEXT.get(mk, "펜타 킬!")
+            return text if ally else "적 " + text
+        if ev.get("ke", True) and self.team_wiped(ev["vt"], ev["v"]):
+            return "마무리!"
         if ev.get("sd"):
-            return "제압되었습니다!"
+            return "제압 되었습니다!"
         if ev.get("fb"):
-            return "선취점!"
+            return "퍼스트 블러드!"
         if ks >= 3:
-            return self.STREAK_TEXT.get(ks, "전설의 출현입니다!")
+            table = self.STREAK_TEXT if ally else self.STREAK_TEXT_ENEMY
+            return table.get(min(ks, 8))
         if not ev.get("ke", True):
-            return "처형당했습니다!"
+            return "처형 되었습니다!"
         if ev["v"] == self.my_id:
-            return "당신이 처치당했습니다!"
-        if ev["k"] == self.my_id:
-            return "적을 처치했습니다!"
-        return "아군이 적을 처치했습니다!" if ev["kt"] == self.my_team else "아군이 처치당했습니다!"
+            return "적에게 당했습니다!"
+        return "적을 처치했습니다!" if ally else "아군이 당했습니다!"
 
     @staticmethod
     def ping_kind(start, end):
@@ -1022,25 +1059,26 @@ class GameScene(Scene):
         return max(PING_DIRS, key=lambda d: d[1] * dx + d[2] * dy)[0]
 
     def draw_ping_wheel(self, surf):
-        """핑을 누르고 있는 동안: 누른 자리 둘레에 네 방향 핑 이름 (끄는 쪽이 밝게)."""
+        """핑을 누른 채 끌기 시작하면: 누른 자리 둘레에 네 방향 핑 모양과 이름 (끄는 쪽이 크고 밝게). 그냥 누르기만 하면 안 보인다."""
         pd = self.ping_drag
         if not pd:
             return
         cx, cy = pd["pos"]
-        cur = self.ping_kind(pd["pos"], ui.mouse_pos())
-        pygame.draw.circle(surf, (10, 14, 24), (cx, cy), 112)
-        pygame.draw.circle(surf, (70, 80, 105), (cx, cy), 112, 2)
+        mouse = ui.mouse_pos()
+        if math.hypot(mouse[0] - cx, mouse[1] - cy) < 24:
+            return
+        cur = self.ping_kind(pd["pos"], mouse)
+        layer = pygame.Surface((240, 240), pygame.SRCALPHA)        # 아주 옅은 바탕 원
+        pygame.draw.circle(layer, (10, 14, 24, 55), (120, 120), 114)
+        pygame.draw.circle(layer, (150, 165, 200, 70), (120, 120), 114, 2)
+        surf.blit(layer, (cx - 120, cy - 120))
+        pygame.draw.line(surf, (230, 230, 240), (cx, cy), mouse, 2)
         for kind, dx, dy in PING_DIRS:
             name, col = PINGS[kind]
             on = kind == cur
-            p = (cx + dx * 70, cy + dy * 70)
-            if on:
-                pygame.draw.circle(surf, tuple(c // 3 for c in col), p, 38)
-            pygame.draw.circle(surf, col if on else (90, 100, 125), p, 38, 2)
-            ui.text(surf, name, p, 13, col if on else ui.TEXT_DIM, anchor="center", bold=on)
-        name, col = PINGS["alert"]
-        on = cur == "alert"
-        pygame.draw.circle(surf, col if on else (90, 100, 125), (cx, cy), 14, 0 if on else 2)
+            p = (cx + dx * 72, cy + dy * 72)
+            self.draw_ping_badge(surf, (p[0], p[1] - 8), kind, 1.35 if on else 0.95)
+            ui.text(surf, name, (p[0], p[1] + 20), 14 if on else 12, col if on else CHAT_WHITE, anchor="center", bold=on)
 
     def draw_ping_badge(self, surf, center, kind, size=1.0):
         """핑 표시 (둥근 배지 + 모양): 신호 !, 위험 X, 가는 중 화살표, 도움 요청 +, 실종 ?"""
@@ -1091,13 +1129,9 @@ class GameScene(Scene):
             return False
         alpha = max(0.0, min(1.0, (3.2 - age) / 0.5)) * min(1.0, age / 0.12)
         ally = ev["kt"] == self.my_team
-        tw = ui.font(22, True).size(text)[0]
-        w = max(420, tw + 190)
+        tw = ui.font(28, True).size(text)[0]
+        w = max(420, tw + 200)
         layer = pygame.Surface((w, 76), pygame.SRCALPHA)
-        bg = (14, 30, 56, 225) if ally else (56, 16, 18, 225)
-        edge = ui.TEAM_UI.get(ev["kt"], ui.BORDER)
-        pygame.draw.rect(layer, bg, (0, 8, w, 60), border_radius=30)
-        pygame.draw.rect(layer, edge, (0, 8, w, 60), 2, border_radius=30)
         # 처치한 쪽: 챔피언이면 초상화, 포탑·미니언이면 회색 원에 이름 한 글자
         kc = (38, 38)
         kinfo = self.champ_info.get(ev["k"])
@@ -1115,7 +1149,11 @@ class GameScene(Scene):
                                 (gamedata.champion(vinfo["c"]) or {}).get("color", (200, 200, 200)))
         pygame.draw.circle(layer, ui.TEAM_UI.get(ev["vt"], ui.TEXT), vc, 31, 3)
         pygame.draw.line(layer, (230, 60, 50), (vc[0] - 18, vc[1] - 18), (vc[0] + 18, vc[1] + 18), 4)
-        ui.text(layer, text, (w // 2, 38), 22, ui.GOLD if ally else (255, 150, 140), anchor="center", bold=True)
+        # 배경 없이 글자만: 어두운 테두리를 둘러 바닥이 밝아도 읽히게
+        col = ui.GOLD if ally else (255, 150, 140)
+        for ox, oy in ((-2, 0), (2, 0), (0, -2), (0, 2), (-2, -2), (2, 2), (-2, 2), (2, -2)):
+            ui.text(layer, text, (w // 2 + ox, 38 + oy), 28, (10, 8, 14), anchor="center", bold=True, shadow=False)
+        ui.text(layer, text, (w // 2, 38), 28, col, anchor="center", bold=True, shadow=False)
         layer.set_alpha(int(255 * alpha))
         surf.blit(layer, (WIDTH // 2 - w // 2, 92))
         return True
@@ -1735,6 +1773,11 @@ class GameScene(Scene):
         self.send_cmd(c="buy", item=iid)
 
     # ------------------------------------------------------------------ 갱신
+    def on_screen(self, x, z, margin=260):
+        """(x, z) 가 지금 화면 안(가장자리에서 margin 픽셀 바깥까지 포함)에 보이는가. 긴 몸(용·이무기)을 생각해 넉넉히 본다."""
+        p = self.app.renderer.camera.world_to_screen(x, 0.8, z)
+        return p is not None and -margin <= p[0] <= WIDTH + margin and -margin <= p[1] <= HEIGHT + margin
+
     def update(self, dt):
         self.audio.tick_vo()
         for cid, e in self.champs.items():
@@ -1745,7 +1788,12 @@ class GameScene(Scene):
             if e.d and e.ca is None:
                 e.ca = self.app.models.new_champ_anim(self.champ_info[cid]["c"]) or False
             if e.ca:
-                e.ca.update(dt, e.d, e)
+                # 화면 안의 챔피언만 매 프레임 움직임을 계산하고, 화면 밖·시야 밖은 0.1초마다 몰아서 계산한다 (리그 계산이 무겁다)
+                e.onscreen = e.visible and self.on_screen(e.x, e.z)
+                e.ca_dt += dt
+                if e.onscreen or e.ca_dt >= 0.1:
+                    e.ca.update(e.ca_dt, e.d, e)
+                    e.ca_dt = 0.0
                 if self.winner is not None and self.champ_info[cid]["tm"] == self.winner and not e.d["dead"]:
                     e.ca.win()
         for e in self.minions.values():
@@ -1874,6 +1922,19 @@ class GameScene(Scene):
                     inner = mapdata.TURRET_RANGE + ((self.my_data() or {}).get("stats", {}).get("radius", 0.55))
                     ring_col = (1.0, 0.3, 0.25, 0.7) if s["tm"] != self.my_team else (0.35, 0.65, 1.0, 0.55)
                     r.draw_transparent(m.ring_thin, model_matrix(s["x"], 0.05, s["z"], scale=inner / (1.0 - RING_THIN)), ring_col)
+            if alive and s["k"] == "turret" and st[4]:
+                # 포탑이 노리는 대상: 포탑 꼭대기에서 대상까지 가는 레이저 선 (적 포탑 빨강 · 아군 포탑 파랑)
+                tgt = self.champs.get(st[4]) or self.minions.get(st[4])
+                if tgt is not None and getattr(tgt, "visible", True) and math.hypot(tgt.x - s["x"], tgt.z - s["z"]) < mapdata.TURRET_RANGE + 3:
+                    ty = (CHAMP_SCALE * 1.0) if st[4] in self.champs else 0.5
+                    dx, dy, dz = tgt.x - s["x"], ty - TURRET_TOP, tgt.z - s["z"]
+                    horiz = math.hypot(dx, dz)
+                    length = math.sqrt(horiz * horiz + dy * dy)
+                    lcol = (1.0, 0.3, 0.25) if s["tm"] != self.my_team else (0.35, 0.65, 1.0)
+                    if length > 0.1:
+                        flick = 0.55 + 0.15 * math.sin(t * 20)
+                        r.draw_transparent(self.beam, beam_matrix(s["x"], TURRET_TOP, s["z"], tgt.x, ty, tgt.z, 0.05),
+                                           (*lcol, flick), additive=True)
             if alive and not st[3] and s["tm"] != self.my_team:
                 # 무적 구조물: 보호막
                 r.draw_transparent(m.orb, model_matrix(s["x"], 1.5, s["z"], scale=s["r"] + 0.7),
@@ -1928,7 +1989,7 @@ class GameScene(Scene):
         # 챔피언
         for cid, e in self.champs.items():
             d = e.d
-            if not d or not e.visible:
+            if not d or not e.visible or not e.onscreen:
                 continue
             info = self.champ_info[cid]
             mesh = m.champion(info["c"])
@@ -2730,6 +2791,8 @@ class GameScene(Scene):
             fade = 1.0 if self.chat_open else max(0.0, min(1.0, (CHAT_SHOW - (now - t)) / 2.0))
             x = CHAT_X + 6
             for text, col in parts:                          # 어두워지지 않고 투명해지며 사라진다
+                if col in (ui.TEXT, ui.TEXT_DIM):
+                    col = CHAT_WHITE                         # 팀 색(파랑·빨강)·금색이 아닌 일반 글자는 흰색
                 img = ui.render_text(text, CHAT_FONT, col, False).copy()
                 sh = ui.render_text(text, CHAT_FONT, (0, 0, 0), False).copy()
                 img.set_alpha(int(255 * fade))

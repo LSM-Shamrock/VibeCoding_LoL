@@ -139,7 +139,7 @@
       ],
       "cone_damage_ad": 0.3,
       "airborne": 0.9,
-      "knock_distance": 2.0,
+      "knock_distance": 0.9,
       "knock_speed": 14.0,
       "wall_stun": 0.8
     },

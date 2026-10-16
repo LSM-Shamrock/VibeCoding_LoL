@@ -297,7 +297,7 @@ class SelectScene(Scene):
             self.draw_tooltip(surf, tooltip)
 
     def draw_team_panel(self, surf, panel, team, room, ally):
-        """팀 한쪽 목록: 플레이어마다 고른 챔피언 초상화(아직 안 골랐으면 빈 원), 이름, 챔피언 이름, 소환사 주문(우리 팀만).
+        """팀 한쪽 목록: 플레이어마다 고른 챔피언 초상화(아직 안 골랐으면 빈 원), 이름, 챔피언 이름, 소환사 주문 (우리 팀만, 상대는 이름만).
         확정한 플레이어는 테두리가 팀 색으로 밝고, 고르는 중이면 흐리다."""
         ui.panel(surf, panel, (12, 18, 30, 220), ui.BORDER)
         col = ui.TEAM_UI[team]
@@ -311,7 +311,7 @@ class SelectScene(Scene):
             ui.panel(surf, card, (32, 46, 74, 235) if mine else (20, 28, 44, 230),
                      col if m["locked"] else (ui.HIGHLIGHT if mine else ui.BORDER), radius=8)
             pc = (card.x + 12 + 34, card.centery)
-            if m["champ"]:
+            if m["champ"] and ally:                     # 상대 팀이 고른 챔피언은 보이지 않는다 (빈 칸만)
                 chd = gamedata.champion(m["champ"]) or {}
                 draw_round_portrait(surf, m["champ"], pc, 34, col if m["locked"] else (120, 130, 150), False,
                                     tuple(chd.get("color", (200, 200, 200))), ring_w=3 if m["locked"] else 2)
@@ -321,11 +321,12 @@ class SelectScene(Scene):
             else:
                 pygame.draw.circle(surf, (14, 18, 28), pc, 34)
                 pygame.draw.circle(surf, (80, 90, 110), pc, 34, 2)
-                cname = "선택 중..."
+                cname = "선택 중..." if ally else ""
             tx = pc[0] + 46
-            ui.text(surf, m["name"] + (" (나)" if mine else ""), (tx, card.centery - 12), 15,
+            ui.text(surf, m["name"] + (" (나)" if mine else ""), (tx, card.centery - (12 if cname else 0)), 15,
                     ui.GOLD if mine else ui.TEXT, anchor="midleft", bold=True)
-            ui.text(surf, cname, (tx, card.centery + 12), 13, ui.TEXT if m["locked"] else ui.TEXT_DIM, anchor="midleft")
+            if cname:
+                ui.text(surf, cname, (tx, card.centery + 12), 13, ui.TEXT if m["locked"] else ui.TEXT_DIM, anchor="midleft")
             if ally:                                    # 같은 팀만 소환사 주문이 보인다 (내 것은 지금 고른 것)
                 spells = self.app.keybinds.spells if mine else m.get("spells") or []
                 for j, sid in enumerate(spells[:2]):
