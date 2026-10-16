@@ -2043,8 +2043,7 @@ class GameScene(Scene):
             big = 1.6 if (ca and ca.is_rig) else 1.0           # 거미 같은 큰 몸은 그림자도 크게
             if big > 1:
                 lift = ca.lift * SC_RIG + e.lift               # 점프 중 높이는 리그가 직접 계산한다 (+ 에어본)
-            sx_, sz_ = (getattr(ca, "shadow_xz", None) or (e.x, e.z)) if ca else (e.x, e.z)    # 이무기는 머리 밑이 아니라 몸통 밑
-            r.draw_transparent(m.shadow, model_matrix(sx_, 0.03, sz_, scale=0.65 * big * CHAMP_SCALE),
+            r.draw_transparent(m.shadow, model_matrix(e.x, 0.03, e.z, scale=0.65 * big * CHAMP_SCALE),
                                (0, 0, 0, 0.35 / (1 + lift)))
             r.draw_transparent(m.ring, model_matrix(e.x, 0.05, e.z, scale=0.85), ring_col)
             anim = d["a"]

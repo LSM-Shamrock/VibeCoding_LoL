@@ -53,7 +53,9 @@ MAX_TURN = 4.5                  # 머리가 돌 수 있는 최대 각속도 (rad
 BODY_TURN = 14.0                # 이동 중 세운 목 바로 뒤 마디가 지나온 길의 방향으로 돌아서는 빠르기 (1/초)
 TAIL_TURN = 2.2                 # ... 꼬리 끝은 이만큼만 (낮을수록 빙빙 돌 때 꼬리가 묵직하게 늦게 돈다)
 BODY_BEND = math.radians(4.5)   # 이동 중 몸(S자 물결을 넣기 전의 길)이 마디 하나에서 꺾일 수 있는 최대 각도 (작을수록 빳빳)
-FWD = 4.0                       # 모델을 앞(머리 쪽)으로 당기는 거리 (보스 단위). 그림자는 따로 몸통 밑에 둔다 (shadow_xz)
+FWD = 13.0                      # 모델을 앞(머리 쪽)으로 당기는 거리 (보스 단위): 챔피언 자리(선택 원·그림자·히트박스)가 몸통 밑에 오게
+OFS_TURN = 3.0                  # 당기는 방향이 몸 방향을 따라 도는 빠르기 (1/초)
+OFS_TURN_MAX = 1.6              # ... 그래도 이보다 빨리는 돌지 않는다 (rad/초): 방향을 휙휙 바꿔도 모델이 챔피언 자리 둘레로 휘둘리지 않는다
 
 _SCALE = _S(SC)
 
@@ -492,7 +494,7 @@ class SerpentAnim:
         self.rang = None                                        # 이동 중 마디 방향 (묵직하게 돌아서게)
         self.lunge_until = -1.0                                 # W 돌진 자세(몸을 곧게 편다)가 끝나는 시각
         self.se_last = 0.0                                      # 세운 목이 끝나는 곳 (머리에서 몸을 따라 잰 거리)
-        self.shadow_w = None                                    # 그림자 자리 (월드 x, z)
+        self.oyaw = 0.0                                         # 모델을 앞으로 당기는 방향 (_draw_scale)
         self.extra = None                                       # 겹침으로 올라탄 높이 (프레임 사이 부드럽게)
         self.dt_last = 1.0                                      # 마지막 프레임 시간 (접힘 속도 계산용)
         self.fold_rate = 4.0
@@ -638,13 +640,8 @@ class SerpentAnim:
         return None
 
     def _draw_scale(self):
-        # 앞으로 당기는 방향은 천천히 따라 도는 몸 방향(byaw): 머리를 휙휙 돌려도 모델 전체가 챔피언 자리 둘레로 휘둘리지 않는다
-        return _T(math.sin(self.byaw) * FWD * SC, 0.0, math.cos(self.byaw) * FWD * SC) @ _SCALE
-
-    @property
-    def shadow_xz(self):
-        """발밑 그림자 자리 (월드 x, z): 세운 목이 땅에 닿는 곳부터 몸통 앞쪽까지의 가운데 (부드럽게 따라온다)."""
-        return self.shadow_w
+        # 앞으로 당기는 방향(oyaw)은 몸 방향을 천천히, 최대 빠르기를 넘지 않게 따라 돈다: 머리를 휙휙 돌려도 모델 전체가 휘둘리지 않는다
+        return _T(math.sin(self.oyaw) * FWD * SC, 0.0, math.cos(self.oyaw) * FWD * SC) @ _SCALE
 
     def mouth(self):
         """머리 앞 입의 월드 위치 (독 뱉기 발사점): (x, y, z)"""
@@ -1076,7 +1073,7 @@ class SerpentAnim:
             self.debris = []
             self.seq = []
             self.wave, self.baseSub, self.auto_emerge = 'none', 0.0, None
-            self.byaw = self.yaw
+            self.byaw = self.oyaw = self.yaw
             self.layout_line(self.px, self.pz, self.yaw)
         if a == 2 and self.t - self.last_attack > 0.6 and not self._busy():
             self.attack()
@@ -1125,26 +1122,14 @@ class SerpentAnim:
         for k in self.cur:
             self.cur[k] += (self.tgt[k] - self.cur[k]) * (1 - math.exp(-self.rate[k] * dt))
         self.byaw += _wrap(self.yaw - self.byaw) * (1 - math.exp(-2.2 * dt))
+        turn = _wrap(self.byaw - self.oyaw) * (1 - math.exp(-OFS_TURN * dt))
+        self.oyaw += max(-OFS_TURN_MAX * dt, min(OFS_TURN_MAX * dt, turn))
         self.lift_cur = max(HEAD_REST, self.cur['lift'])
         self.jaw_cur = self.cur['jaw']
         self.hood_cur = self.cur['hood']
         self._push_trail()
         self._solve_body()
         self._place_head(dt)
-        self._update_shadow(dt)
-
-    def _update_shadow(self, dt):
-        k0 = min(NR - 2, int(self.se_last / DSEG) + 1)
-        k1 = min(NR, k0 + 8)
-        bx = sum(self.cxL[k0:k1]) / (k1 - k0)
-        bz = sum(self.czL[k0:k1]) / (k1 - k0)
-        p = self._draw_scale() @ np.array([bx, 0.0, bz, 1.0])
-        tx, tz = float(p[0]), float(p[2])
-        if self.shadow_w is None or math.hypot(tx - self.shadow_w[0], tz - self.shadow_w[1]) > 3.0:
-            self.shadow_w = (tx, tz)
-        else:
-            k = 1 - math.exp(-12 * dt)
-            self.shadow_w = (self.shadow_w[0] + (tx - self.shadow_w[0]) * k, self.shadow_w[1] + (tz - self.shadow_w[1]) * k)
 
     lift_cur = HEAD_REST
 
@@ -1156,7 +1141,7 @@ class SerpentAnim:
         face = facing_to_rot(ent.f)
         if not self.have_pos:
             self.have_pos = True
-            self.yaw = self.byaw = face
+            self.yaw = self.byaw = self.oyaw = face
             self.layout_line(x, z, face)
             return
         mx, mz = x - self.px, z - self.pz
