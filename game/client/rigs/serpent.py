@@ -107,7 +107,8 @@ POSES = {
     'idle': {},
     'move': {'lift': 11.5, 'pitch': 0.3, 'und': 1.3, 'fold': 0.0},      # 달릴 때도 목은 세운 채
     'wind': {'lift': 13.5, 'jaw': 0.45, 'hood': 1.0, 'pitch': -0.12, 'und': 0.1, 'ext': -1.5},        # W 돌진 준비: 몸을 쳐들고 노려본다
-    'charge': {'lift': 1.3, 'jaw': 1.0, 'hood': 0.3, 'pitch': 0.1, 'und': 0.1, 'fold': 0.0},         # W 돌진: 낮게 입을 벌리고 달려든다
+    'charge': {'lift': 1.6, 'jaw': 1.0, 'hood': 0.3, 'pitch': 0.12, 'und': 0.0, 'ext': 3.5, 'fold': 0.0},   # W 돌진: 낮게 목을 쭉 뻗고 입을 벌려 달려든다
+    'lwind': {'lift': 8.0, 'jaw': 0.6, 'hood': 1.0, 'pitch': 0.0, 'und': 0.0, 'ext': -1.0, 'fold': 0.0},   # W 돌진 직전: 몸을 펴며 고개를 낮춘다
     'spit': {'lift': 13.0, 'jaw': 1.0, 'hood': 1.0, 'pitch': 0.42, 'und': 0.2, 'ext': 3.0},          # Q 독 뱉기
     'rear': {'lift': 17.5, 'jaw': 0.35, 'hood': 1.0, 'pitch': -0.3, 'und': 0.12, 'ext': -3.0},       # E 내려찍기 준비: 높이 치솟는다
     'slam': {'lift': 0.95, 'jaw': 1.0, 'hood': 0.7, 'pitch': 0.9, 'und': 0.1},          # E 내려찍기 (ext 는 목표 거리에 맞춘다: slam_reach)
@@ -120,7 +121,8 @@ POSES = {
 }
 RATES = {'lift': 5.0, 'jaw': 12.0, 'hood': 6.0, 'pitch': 8.0, 'und': 3.0, 'ext': 12.0, 'fold': 4.0}
 FAST = {'bite': {'jaw': 26, 'lift': 18, 'pitch': 18, 'ext': 26}, 'snap': {'jaw': 40, 'lift': 24, 'pitch': 22, 'ext': 34},
-        'slam': {'lift': 34, 'pitch': 26, 'jaw': 26, 'ext': 30}, 'charge': {'lift': 18, 'jaw': 20, 'pitch': 16, 'fold': 16},
+        'slam': {'lift': 34, 'pitch': 26, 'jaw': 26, 'ext': 30}, 'charge': {'lift': 14, 'jaw': 20, 'pitch': 16, 'fold': 16, 'ext': 14},
+        'lwind': {'lift': 22, 'jaw': 22, 'pitch': 20, 'ext': 20, 'fold': 30},
         'rise': {'lift': 14, 'jaw': 16}, 'rear': {'lift': 7.0}, 'wind': {'lift': 10.0, 'ext': 8}, 'spit': {'lift': 14.0, 'pitch': 16, 'jaw': 20},
         'move': {'fold': 6.0}}
 
@@ -488,6 +490,7 @@ class SerpentAnim:
         self.still_t = 0.0
         self.rx = self.rz = None                                # 마디의 (프레임 사이에 이어지는) 위치
         self.rang = None                                        # 이동 중 마디 방향 (묵직하게 돌아서게)
+        self.lunge_until = -1.0                                 # W 돌진 자세(몸을 곧게 편다)가 끝나는 시각
         self.extra = None                                       # 겹침으로 올라탄 높이 (프레임 사이 부드럽게)
         self.dt_last = 1.0                                      # 마지막 프레임 시간 (접힘 속도 계산용)
         self.fold_rate = 4.0
@@ -558,9 +561,9 @@ class SerpentAnim:
 
     def cast(self, slot):
         if slot == "Q":                                         # 몸을 쳐들었다가 독을 뱉는다
-            self._play([(0.2, 'wind'), (0.4, 'spit')])
+            self._play([(0.2, 'wind'), (0.45, 'spit')])
         elif slot == "W":                                       # 노려본 뒤 돌진 (on_fx('lunge') 가 정확한 시간으로 덮어쓴다)
-            self._play([(0.08, 'wind'), (0.5, 'charge')])
+            self._play([(0.08, 'lwind'), (0.5, 'charge')])
         elif slot == "E":                                       # 높이 치솟았다가 내려찍는다
             self._play([(0.6, 'rear'), (0.45, 'slam')])
         elif slot == "R":
@@ -570,8 +573,16 @@ class SerpentAnim:
 
     def on_fx(self, kind, ev):
         if kind == "lunge":
-            delay = float(ev.get("delay", 0.4))
-            self._play([(delay, 'wind'), (float(ev.get("dur", 0.3)) + 0.12, 'charge')])
+            # 돌진: 고개를 돌진 방향으로 홱 돌리고, 지나온 길을 머리 뒤 일직선으로 바꿔 S자로 접혀 있던 몸이 쭉 펴지며 따라오게 한다
+            delay = float(ev.get("delay", 0.1))
+            dur = float(ev.get("dur", 0.3))
+            if "x2" in ev:
+                dx, dz = ev["x2"] - ev["x"], ev["z2"] - ev["z"]
+                if math.hypot(dx, dz) > 0.1:
+                    self.yaw = self.byaw = math.atan2(dx, dz)
+            self._straight_trail(self.yaw)
+            self.lunge_until = self.t + delay + dur + 0.25
+            self._play([(delay, 'lwind'), (dur + 0.12, 'charge')])
         elif kind == "serpent_rear":
             if "x2" in ev:
                 self.slam_tgt = (ev["x2"] / SC, ev["z2"] / SC)
@@ -662,6 +673,16 @@ class SerpentAnim:
         self.trHead = n - 1
         self.lastX, self.lastZ = self.px, self.pz
 
+    def _straight_trail(self, yaw):
+        """지나온 길만 머리 뒤 일직선으로 바꾼다 (지금 보이는 몸 모양은 그대로 두어, 그 모양에서 곧게 펴지며 따라온다)."""
+        dx, dz = math.sin(yaw), math.cos(yaw)
+        N = int(math.ceil((BODY_LEN + 12) / TS))
+        pts = []
+        for i in range(N + 1):
+            pts += [self.px - dx * i * TS, self.pz - dz * i * TS]
+        self._set_trail(pts)
+        self.rang = None
+
     def layout_line(self, x, z, yaw):
         """머리 뒤로 일직선으로 놓는다. yaw 는 머리가 향하는 방향 (앞 = (sin yaw, cos yaw))."""
         dx, dz = math.sin(yaw), math.cos(yaw)
@@ -721,7 +742,10 @@ class SerpentAnim:
         # 달릴 때도 서 있을 때와 같은 S자 모양을 유지한다: 머리 뒤로 떨어진 거리(hp)만큼 지나온 길 위에 놓고, 옆으로 벌어진 만큼(sp)을 길의 옆쪽으로 민다.
         Ha = np.zeros(NR)                                  # 접혀 있던 몸은 길이 그대로 곧게 풀리며 시작하고, 곧 S자 모양으로 바뀐다
         np.cumsum(np.sqrt(np.maximum(0.0036, DSEG * DSEG - dy * dy)), out=Ha[1:])
-        mx = self.s_mix = (0.0 if self.tgt['fold'] > 0.5 else min(1.0, self.s_mix + self.dt_last * 1.6))
+        if self.t < self.lunge_until:                      # 돌진 중: S자 물결을 빨리 거둬 몸이 일직선으로 쭉 펴진다
+            mx = self.s_mix = max(0.0, self.s_mix - self.dt_last * 12.0)
+        else:
+            mx = self.s_mix = (0.0 if self.tgt['fold'] > 0.5 else min(1.0, self.s_mix + self.dt_last * 1.6))
         mx = _smooth(mx)
         H = Ha * (1 - mx) + hp * mx
         wob = sp * mx
@@ -746,7 +770,10 @@ class SerpentAnim:
         if self.tgt['fold'] <= 0.5 and self.rx is not None:
             # 달릴 때: 세운 목까지는 지나온 길 그대로, 그 뒤 몸은 꼬리로 갈수록 늦게 돌아서고 빳빳해서
             # 제자리에서 빙빙 돌아도 길을 따라 작게 꼬이지 않고 묵직하게 끌려온다 (S자 물결은 그 위에 얹는다)
-            x, zz, self.rang = heavy_chain(self.rang, x, zz, int(se / DSEG) + 2, self.dt_last, BODY_TURN, TAIL_TURN, BODY_BEND)
+            lunging = self.t < self.lunge_until             # 돌진 중에는 몸이 머리를 바짝 따라 곧게 끌려온다
+            x, zz, self.rang = heavy_chain(self.rang, x, zz, int(se / DSEG) + 2, self.dt_last,
+                                           BODY_TURN * (3 if lunging else 1), TAIL_TURN * (6 if lunging else 1),
+                                           None if lunging else BODY_BEND)
             gx_ = np.empty(NR)
             gz_ = np.empty(NR)
             gx_[1:-1], gz_[1:-1] = x[:-2] - x[2:], zz[:-2] - zz[2:]

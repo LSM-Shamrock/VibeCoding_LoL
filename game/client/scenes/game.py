@@ -777,6 +777,11 @@ class GameScene(Scene):
             ch = self.champs.get(ev.get("d"))
             if ch and ch.ca and ch.ca.is_rig:
                 ch.ca.leap(ev.get("dur", 0.5), ev.get("delay", 0.0))
+        if kind == "spit" and ev.get("style") != "fire":         # 독 뱉기: 리그가 있으면 실제 입 위치에서 나가게
+            ch = self.champs.get(ev.get("d"))
+            if ch and ch.ca and hasattr(ch.ca, "mouth") and ch.visible:
+                mx_, my_, mz_ = ch.ca.mouth()
+                ev = dict(ev, mx=mx_, my=my_, mz=mz_)
         if kind in ("lunge", "serpent_rear", "dive", "dive_out", "sky_dive"):   # 이무기: 돌진·내려찍기 준비·잠행·솟구침 자세를 몸에 알린다
             ch = self.champs.get(ev.get("d"))
             if ch and ch.ca and hasattr(ch.ca, "on_fx"):

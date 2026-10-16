@@ -709,9 +709,13 @@ class Vfx:
         dx, dz = x2 - x, z2 - z
         dist = max(0.5, math.hypot(dx, dz))
         ux, uz = dx / dist, dz / dist
-        delay = 0.1                                           # 머리를 쳐드는 동안은 입에서 아직 안 나간다
+        if "mx" in ev:                                        # 서버가 머리를 쳐든 뒤에 보낸 이벤트 + 리그의 실제 입 위치
+            delay = 0.0
+            x0, y0, z0 = ev["mx"], ev["my"], ev["mz"]
+        else:
+            delay = 0.1                                       # 머리를 쳐드는 동안은 입에서 아직 안 나간다
+            x0, y0, z0 = x + ux * 0.9, 2.45, z + uz * 0.9            # 세운 머리의 입 높이
         T = max(0.25, ev.get("dur", 0.7) - delay)
-        x0, y0, z0 = x + ux * 0.9, 2.45, z + uz * 0.9                # 세운 머리의 입 높이
         g = -18.0
         vx, vz = (x2 - x0) / T, (z2 - z0) / T
         vy = ((0.15 - y0) - 0.5 * g * T * T) / T

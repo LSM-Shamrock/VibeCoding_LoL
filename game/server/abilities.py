@@ -895,9 +895,16 @@ def spit_pool(cx):
     sim, c, ab = cx.sim, cx.c, cx.ab
     gx, gz = cx.ground_point(ab["range"])
     flight = ab.get("flight", 0.7)
+    windup = ab.get("windup", 0.0)                      # 머리를 쳐들었다가 뱉기까지 (그동안 입에서 아직 안 나간다)
     style = ab.get("style", "venom")
-    fx(sim, "spit", c.x, c.z, x2=gx, z2=gz, dur=flight, d=c.id, style=style, tm=c.team)
-    spawn_zone(sim, c, dict(ab, delay=flight), cx.rank, gx, gz)
+
+    def launch(sim_):
+        fx(sim_, "spit", c.x, c.z, x2=gx, z2=gz, dur=flight, d=c.id, style=style, tm=c.team)
+    if windup > 0:
+        sim.schedule(windup, launch)
+    else:
+        launch(sim)
+    spawn_zone(sim, c, dict(ab, delay=windup + flight), cx.rank, gx, gz)
     land_dmg = sim.ability_damage(c, ab, cx.rank)
     r = ab["radius"]
 
@@ -905,7 +912,7 @@ def spit_pool(cx):
         for u in sim_.enemies_in_radius(c.team, gx, gz, r):
             sim_.deal_damage(c, u, land_dmg, ab.get("damage_type", "magic"), ability=True)
         fx(sim_, "spit_land", gx, gz, r=r, style=style, tm=c.team)
-    sim.schedule(flight, land)
+    sim.schedule(windup + flight, land)
     return True
 
 
