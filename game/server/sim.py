@@ -22,7 +22,7 @@ from ..shared.constants import (
     HEAL_SPEED_PCT, HEAL_SPEED_TIME, IGNITE_BASE, IGNITE_HEAL_CUT, IGNITE_PER_LEVEL, IGNITE_RANGE, IGNITE_TICK,
     IGNITE_TIME, FOUNTAIN_HEAL_PCT, FOUNTAIN_LASER_DPS, FOUNTAIN_LASER_RADIUS, FOUNTAIN_RADIUS, INHIBITOR_RESPAWN,
     INVENTORY_SLOTS, MARK_COOLDOWN, MINION_GOLD_RANGE, MARK_DASH_SPEED, MARK_RANGE, MARK_RECAST_TIME,
-    MARK_SPEED, MAX_LEVEL, PASSIVE_GOLD_PER_SEC, PASSIVE_XP_PER_SEC, PLATE_SHARE_RANGE, RECALL_TIME, RED,
+    MARK_SPEED, MAX_LEVEL, PASSIVE_GOLD_PER_SEC, PASSIVE_XP_PER_SEC, PLATE_SHARE_RANGE, RECALL_TIME, RECALL_TIME_HOME, RED,
     RELIC_FIRST_SPAWN, RELIC_HEAL_PCT, RELIC_RADIUS, RELIC_RESPAWN, SELL_RATIO, SIGHT, WAVE_INTERVAL, XP_SHARE_RANGE,
     death_timer, kill_bounty, xp_to_next,
 )
@@ -686,11 +686,14 @@ class Simulation:
         c.attack_move = False
 
     def recall(self, c):
-        """귀환 시작: RECALL_TIME 동안 가만히 있으면 우물로 이동 (이동·공격·스킬·피해·기절 시 취소)."""
+        """귀환 시작: 정신집중 동안 가만히 있으면 우물로 이동 (이동·공격·스킬·피해·기절 시 취소).
+        맵 절반을 기준으로 우리 진영(우리 우물 쪽)에서는 RECALL_TIME_HOME, 적 진영에서는 RECALL_TIME."""
         if c.dead or c.dash or c.rope or c.recall_at is not None or c.stunned(self.time) or self.locked(c):
             return
         c.clear_orders()
-        c.recall_at = self.time + RECALL_TIME
+        home = c.x * mapdata.team_dir(c.team) <= 0.0          # 블루는 x < 0, 레드는 x > 0 이 우리 진영
+        c.recall_total = RECALL_TIME_HOME if home else RECALL_TIME
+        c.recall_at = self.time + c.recall_total
 
     def level_ability(self, c, slot):
         if slot not in SLOTS or c.skill_points <= 0:
@@ -1718,7 +1721,7 @@ class Simulation:
             "ab": c.ranks, "sp": c.skill_points,
             "cd": {k: round(max(0.0, v - t), 1) for k, v in c.ready_at.items()},
             "mk": bool(c.mark), "spl": c.spells, "dead": c.dead, "rt": round(max(0.0, c.respawn_at - t), 1) if c.dead else 0,
-            "rc": round(max(0.0, c.recall_at - t), 1) if c.recall_at is not None else 0,
+            "rc": round(max(0.0, c.recall_at - t), 1) if c.recall_at is not None else 0, "rct": c.recall_total,
             "st": st, "a": c.anim, "k": c.kills, "d": c.deaths, "as": c.assists, "cs": c.cs,
             "shop": self.can_shop(c), "ud": len(c.undo),
             "s": {"ad": round(c.stats["ad"]), "ap": round(c.stats["ap"]), "ar": round(c.stats["armor"]),

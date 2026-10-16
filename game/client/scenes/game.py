@@ -2140,7 +2140,7 @@ class GameScene(Scene):
                                    additive=True)
             if d.get("rc", 0) > 0:
                 # 귀환 중: 발밑 원 + 위로 올라가는 고리
-                k = 1 - d["rc"] / RECALL_TIME
+                k = 1 - d["rc"] / max(0.1, d.get("rct", RECALL_TIME))
                 r.draw_transparent(m.disc, model_matrix(e.x, 0.06, e.z, scale=1.1), (0.35, 0.6, 1.0, 0.25 + 0.2 * k),
                                    additive=True)
                 for j in range(2):
@@ -2650,7 +2650,7 @@ class GameScene(Scene):
             ui.text(surf, f"부활까지 {math.ceil(me['rt'])}초", (WIDTH // 2, 270), 34, (230, 230, 240), anchor="center",
                     bold=True)
         if me and not me["dead"] and me.get("rc", 0) > 0:
-            k = 1 - me["rc"] / RECALL_TIME
+            k = 1 - me["rc"] / max(0.1, me.get("rct", RECALL_TIME))
             r = pygame.Rect(WIDTH // 2 - 130, 560, 260, 14)
             ui.bar(surf, r, k, (90, 150, 255))
             ui.text(surf, f"귀환 {me['rc']:.1f}", (r.centerx, r.y - 3), 14, anchor="midbottom", bold=True)
