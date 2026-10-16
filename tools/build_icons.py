@@ -52,7 +52,7 @@ SPELLS = {
     "ignite": ("delapouite/fire-spell-cast", (240, 110, 70)),
 }
 
-# 능력치 키 -> (아이콘, 색)
+# 능력치 키 -> (예전 game-icons 아이콘(지금은 쓰지 않음), 색). 그림은 simple_stat 이 직접 그린다
 STATS = {
     "ad": ("lorc/broadsword", (255, 150, 90)),
     "ap": ("lorc/magic-swirl", (190, 135, 255)),
@@ -178,6 +178,58 @@ def flash_blink(src, size, color):
     return im.resize((size, size), Image.LANCZOS)
 
 
+def simple_stat(key, size, color):
+    """능력치 패널용 단순한 평면 아이콘 (직접 그림). 굵은 선과 단색 도형만 쓴다."""
+    import math
+    from PIL import Image, ImageDraw
+    S = size * 4
+    im = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    c = (*color, 255)
+    w = int(S * 0.11)                                       # 기본 선 굵기
+
+    def shield(pts_only=False):
+        return [(0.18 * S, 0.14 * S), (0.82 * S, 0.14 * S), (0.82 * S, 0.50 * S), (0.50 * S, 0.88 * S), (0.18 * S, 0.50 * S)]
+
+    if key == "ad":                                         # 칼: 비스듬한 칼날 + 가드 + 손잡이
+        d.polygon([(0.80 * S, 0.12 * S), (0.88 * S, 0.20 * S), (0.42 * S, 0.66 * S), (0.34 * S, 0.58 * S)], fill=c)
+        d.line([(0.22 * S, 0.56 * S), (0.44 * S, 0.78 * S)], fill=c, width=w)
+        d.line([(0.33 * S, 0.67 * S), (0.16 * S, 0.84 * S)], fill=c, width=int(w * 0.9))
+    elif key == "ap":                                       # 반짝이는 별
+        cx, cy = 0.5 * S, 0.5 * S
+        pts = []
+        for i in range(8):
+            a = -math.pi / 2 + i * math.pi / 4
+            r = 0.40 * S if i % 2 == 0 else 0.12 * S
+            pts.append((cx + math.cos(a) * r, cy + math.sin(a) * r))
+        d.polygon(pts, fill=c)
+    elif key == "armor":                                    # 꽉 찬 방패
+        d.polygon(shield(), fill=c)
+    elif key == "mr":                                       # 테두리 방패 + 가운데 구슬
+        d.polygon(shield(), outline=c, width=w)
+        d.ellipse((0.40 * S, 0.34 * S, 0.60 * S, 0.54 * S), fill=c)
+    elif key == "attack_speed":                             # 겹친 두 화살촉 >>
+        for ox in (0.0, 0.28):
+            d.line([((0.20 + ox) * S, 0.22 * S), ((0.46 + ox) * S, 0.50 * S), ((0.20 + ox) * S, 0.78 * S)], fill=c, width=w,
+                   joint="curve")
+    elif key == "move_speed":                               # 장화 + 속도선
+        d.polygon([(0.40 * S, 0.16 * S), (0.62 * S, 0.16 * S), (0.62 * S, 0.58 * S), (0.86 * S, 0.66 * S), (0.86 * S, 0.84 * S),
+                   (0.40 * S, 0.84 * S)], fill=c)
+        for y in (0.36, 0.52, 0.68):
+            d.line([(0.10 * S, y * S), (0.28 * S, y * S)], fill=c, width=int(w * 0.6))
+    elif key == "ability_haste":                            # 모래시계
+        d.line([(0.22 * S, 0.14 * S), (0.78 * S, 0.14 * S)], fill=c, width=w)
+        d.line([(0.22 * S, 0.86 * S), (0.78 * S, 0.86 * S)], fill=c, width=w)
+        d.polygon([(0.30 * S, 0.20 * S), (0.70 * S, 0.20 * S), (0.50 * S, 0.50 * S)], fill=c)
+        d.polygon([(0.50 * S, 0.50 * S), (0.70 * S, 0.80 * S), (0.30 * S, 0.80 * S)], outline=c, width=int(w * 0.6))
+    elif key == "crit":                                     # 조준경: 고리 + 네 방향 눈금 + 가운데 점
+        d.ellipse((0.20 * S, 0.20 * S, 0.80 * S, 0.80 * S), outline=c, width=int(w * 0.8))
+        for (x0, y0, x1, y1) in ((0.5, 0.06, 0.5, 0.30), (0.5, 0.70, 0.5, 0.94), (0.06, 0.5, 0.30, 0.5), (0.70, 0.5, 0.94, 0.5)):
+            d.line([(x0 * S, y0 * S), (x1 * S, y1 * S)], fill=c, width=int(w * 0.8))
+        d.ellipse((0.44 * S, 0.44 * S, 0.56 * S, 0.56 * S), fill=c)
+    return im.resize((size, size), Image.LANCZOS)
+
+
 COMPOSED = {"@spider_leap": spider_leap, "@serpent_dive": serpent_dive, "@flash_blink": flash_blink}
 
 
@@ -236,9 +288,8 @@ def main():
     for name, (rel, col) in SPELLS.items():
         tile(src, rel, col).save(os.path.join(OUT, "spells", f"{name}.png"))
     from PIL import Image
-    for key, (rel, col) in STATS.items():
-        im = svg_to_image(os.path.join(src, rel + ".svg"), 64, col)
-        im.save(os.path.join(OUT, "stats", f"{key}.png"))
+    for key, (_rel, col) in STATS.items():                 # 능력치 아이콘은 단순한 평면 그림 (직접 그림)
+        simple_stat(key, 64, col).save(os.path.join(OUT, "stats", f"{key}.png"))
     print("아이콘을 만들었습니다:", OUT)
 
 

@@ -92,7 +92,7 @@ PINGS = {"alert": ("신호", (255, 215, 90)), "danger": ("위험", (255, 80, 70)
 PING_DIRS = (("danger", 0, -1), ("omw", 1, 0), ("assist", 0, 1), ("missing", -1, 0))     # 끄는 방향 -> 핑 종류
 PING_TIME = 3.0
 CHAT_WHITE = (255, 255, 255)
-TURRET_TOP = 3.2               # 포탑 레이저·포탄이 나가는 높이
+TURRET_TOP = 4.35              # 포탑 꼭대기 수정 높이: 레이저와 포탄이 여기서 나간다
 ZOOM_MAX = 22.0                 # 마우스 휠로 멀리 볼 수 있는 한계 (처음 화면)
 MOVE_COLOR = (0.35, 0.65, 1.0)          # 이동 지점 표시 색
 MOVE_COLOR_UI = (110, 175, 255)
@@ -1145,10 +1145,9 @@ class GameScene(Scene):
         vc = (w - 38, 38)
         vinfo = self.champ_info.get(ev["v"])
         if vinfo:
-            draw_round_portrait(layer, vinfo["c"], vc, 30, ui.TEAM_UI.get(ev["vt"], ui.TEXT), True,
+            draw_round_portrait(layer, vinfo["c"], vc, 30, ui.TEAM_UI.get(ev["vt"], ui.TEXT), False,
                                 (gamedata.champion(vinfo["c"]) or {}).get("color", (200, 200, 200)))
         pygame.draw.circle(layer, ui.TEAM_UI.get(ev["vt"], ui.TEXT), vc, 31, 3)
-        pygame.draw.line(layer, (230, 60, 50), (vc[0] - 18, vc[1] - 18), (vc[0] + 18, vc[1] + 18), 4)
         # 배경 없이 글자만: 어두운 테두리를 둘러 바닥이 밝아도 읽히게
         col = ui.GOLD if ally else (255, 150, 140)
         for ox, oy in ((-2, 0), (2, 0), (0, -2), (0, 2), (-2, -2), (2, 2), (-2, 2), (2, -2)):
@@ -1773,6 +1772,30 @@ class GameScene(Scene):
         self.send_cmd(c="buy", item=iid)
 
     # ------------------------------------------------------------------ 갱신
+    def target_height(self, uid):
+        """포탑이 노리는 대상의 몸 한가운데 높이 (챔피언 / 미니언)."""
+        return CHAMP_SCALE * 1.0 if uid in self.champs else 0.5
+
+    def turret_shot_height(self, team, x, z):
+        """포탑 포탄의 높이: 쏜 포탑(같은 팀, 가장 가까운) 꼭대기 수정에서 그 포탑이 노리는 대상까지 거리에 비례해 내려간다."""
+        best, bd = None, mapdata.TURRET_RANGE + 3.0
+        for sid, s in self.structs.items():
+            if s["k"] != "turret" or s["tm"] != team or not self.struct_state[sid][2]:
+                continue
+            d = math.hypot(x - s["x"], z - s["z"])
+            if d < bd:
+                best, bd = sid, d
+        if best is None:
+            return 1.0
+        s = self.structs[best]
+        tid = self.struct_state[best][4]
+        tgt = self.champs.get(tid) or self.minions.get(tid)
+        if tgt is None:
+            return max(1.0, TURRET_TOP - bd * 0.4)
+        total = math.hypot(tgt.x - s["x"], tgt.z - s["z"]) or 1.0
+        k = max(0.0, min(1.0, bd / total))
+        return TURRET_TOP + (self.target_height(tid) - TURRET_TOP) * k
+
     def on_screen(self, x, z, margin=260):
         """(x, z) 가 지금 화면 안(가장자리에서 margin 픽셀 바깥까지 포함)에 보이는가. 긴 몸(용·이무기)을 생각해 넉넉히 본다."""
         p = self.app.renderer.camera.world_to_screen(x, 0.8, z)
@@ -1926,15 +1949,15 @@ class GameScene(Scene):
                 # 포탑이 노리는 대상: 포탑 꼭대기에서 대상까지 가는 레이저 선 (적 포탑 빨강 · 아군 포탑 파랑)
                 tgt = self.champs.get(st[4]) or self.minions.get(st[4])
                 if tgt is not None and getattr(tgt, "visible", True) and math.hypot(tgt.x - s["x"], tgt.z - s["z"]) < mapdata.TURRET_RANGE + 3:
-                    ty = (CHAMP_SCALE * 1.0) if st[4] in self.champs else 0.5
+                    ty = self.target_height(st[4])
                     dx, dy, dz = tgt.x - s["x"], ty - TURRET_TOP, tgt.z - s["z"]
                     horiz = math.hypot(dx, dz)
                     length = math.sqrt(horiz * horiz + dy * dy)
-                    lcol = (1.0, 0.3, 0.25) if s["tm"] != self.my_team else (0.35, 0.65, 1.0)
+                    lcol = (1.0, 0.18, 0.15) if s["tm"] != self.my_team else (0.25, 0.55, 1.0)
                     if length > 0.1:
-                        flick = 0.55 + 0.15 * math.sin(t * 20)
-                        r.draw_transparent(self.beam, beam_matrix(s["x"], TURRET_TOP, s["z"], tgt.x, ty, tgt.z, 0.05),
-                                           (*lcol, flick), additive=True)
+                        flick = 0.75 + 0.2 * math.sin(t * 20)
+                        r.draw_transparent(self.beam, beam_matrix(s["x"], TURRET_TOP, s["z"], tgt.x, ty, tgt.z, 0.025),
+                                           (*lcol, flick), unlit=1.0)
             if alive and not st[3] and s["tm"] != self.my_team:
                 # 무적 구조물: 보호막
                 r.draw_transparent(m.orb, model_matrix(s["x"], 1.5, s["z"], scale=s["r"] + 0.7),
@@ -2128,6 +2151,8 @@ class GameScene(Scene):
                 continue
             mesh = m.proj.get(p["style"], m.proj["minion_bolt"])
             y, emis = PROJ_LOOK.get(p["style"], (1.1, None))
+            if p["style"].startswith("turret_shot"):
+                y = self.turret_shot_height(p["team"], x, z)      # 꼭대기 수정에서 나와 대상 쪽으로 내려간다
             emis = emis or (0, 0, 0)
             rot = math.atan2(p["dx"], p["dz"])
             tint = (1, 1, 1, 1)

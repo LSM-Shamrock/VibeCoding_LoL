@@ -53,7 +53,7 @@ MAX_TURN = 4.5                  # 머리가 돌 수 있는 최대 각속도 (rad
 BODY_TURN = 14.0                # 이동 중 세운 목 바로 뒤 마디가 지나온 길의 방향으로 돌아서는 빠르기 (1/초)
 TAIL_TURN = 2.2                 # ... 꼬리 끝은 이만큼만 (낮을수록 빙빙 돌 때 꼬리가 묵직하게 늦게 돈다)
 BODY_BEND = math.radians(4.5)   # 이동 중 몸(S자 물결을 넣기 전의 길)이 마디 하나에서 꺾일 수 있는 최대 각도 (작을수록 빳빳)
-FWD = 4.0                       # 모델을 앞(머리 쪽)으로 당기는 거리 (보스 단위): 발밑 원 그림자가 모델보다 살짝 뒤에 오게
+FWD = 13.0                      # 모델을 앞(머리 쪽)으로 당기는 거리 (보스 단위): 발밑 원 그림자가 머리가 아니라 몸통 밑에 오게
 
 _SCALE = _S(SC)
 
@@ -558,11 +558,11 @@ class SerpentAnim:
 
     def cast(self, slot):
         if slot == "Q":                                         # 몸을 쳐들었다가 독을 뱉는다
-            self._play([(0.28, 'wind'), (0.5, 'spit')])
+            self._play([(0.2, 'wind'), (0.4, 'spit')])
         elif slot == "W":                                       # 노려본 뒤 돌진 (on_fx('lunge') 가 정확한 시간으로 덮어쓴다)
-            self._play([(0.4, 'wind'), (0.5, 'charge')])
+            self._play([(0.08, 'wind'), (0.5, 'charge')])
         elif slot == "E":                                       # 높이 치솟았다가 내려찍는다
-            self._play([(0.75, 'rear'), (0.45, 'slam')])
+            self._play([(0.6, 'rear'), (0.45, 'slam')])
         elif slot == "R":
             if self.wave == 'none' and self.baseSub < 1:
                 self.dive(0.6)

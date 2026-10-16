@@ -69,16 +69,8 @@
 
 ## 능력치 (`assets/ui/stats/<키>.png`)
 
-| 능력치 | 아이콘 (작가) |
-|---|---|
-| 공격력 (`ad`) | [broadsword](https://game-icons.net/1x1/lorc/broadsword.html) — Lorc |
-| 주문력 (`ap`) | [magic-swirl](https://game-icons.net/1x1/lorc/magic-swirl.html) — Lorc |
-| 방어력 (`armor`) | [checked-shield](https://game-icons.net/1x1/lorc/checked-shield.html) — Lorc |
-| 마법 저항력 (`mr`) | [magic-shield](https://game-icons.net/1x1/lorc/magic-shield.html) — Lorc |
-| 공격 속도 (`attack_speed`) | [fast-forward-button](https://game-icons.net/1x1/delapouite/fast-forward-button.html) — Delapouite |
-| 이동 속도 (`move_speed`) | [running-shoe](https://game-icons.net/1x1/delapouite/running-shoe.html) — Delapouite |
-| 스킬 가속 (`ability_haste`) | [hourglass](https://game-icons.net/1x1/lorc/hourglass.html) — Lorc |
-| 치명타 확률 (`crit`) | [crosshair](https://game-icons.net/1x1/delapouite/crosshair.html) — Delapouite |
+단순한 평면 아이콘으로 직접 그렸습니다 (`tools/build_icons.py` 의 `simple_stat`): 공격력 칼, 주문력 별, 방어력 방패,
+마법 저항력 테두리 방패 + 구슬, 공격 속도 », 이동 속도 장화, 스킬 가속 모래시계, 치명타 조준경.
 
 ## 마우스 커서 (`assets/ui/cursors/*.png`, `tools/build_cursors.py`)
 

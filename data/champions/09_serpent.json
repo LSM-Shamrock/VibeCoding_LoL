@@ -69,7 +69,7 @@
       ],
       "range": 7.5,
       "radius": 2.2,
-      "flight": 0.7,
+      "flight": 0.5,
       "duration": 6.0,
       "damage": [
         30,
@@ -119,7 +119,7 @@
       "range": 7.5,
       "width": 1.8,
       "speed": 26.0,
-      "windup": 0.4,
+      "windup": 0.08,
       "damage": [
         60,
         95,
@@ -131,7 +131,7 @@
       "damage_type": "physical",
       "slow": 0.3,
       "slow_duration": 1.0,
-      "desc": "잠시 노려본 뒤 일직선으로 돌진합니다. 지나는 길의 적은 피해를 입고 느려집니다."
+      "desc": "곧바로 일직선으로 돌진합니다. 지나는 길의 적은 피해를 입고 느려집니다."
     },
     "E": {
       "name": "내려찍기",
@@ -155,7 +155,7 @@
       "range": 5.5,
       "radius": 2.6,
       "wave_radius": 5.2,
-      "delay": 0.75,
+      "delay": 0.6,
       "damage": [
         70,
         110,
