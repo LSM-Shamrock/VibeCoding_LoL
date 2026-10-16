@@ -43,7 +43,7 @@ CAP = int(math.ceil((BODY_LEN + 40) / TS))
 GCELL = 3.6                     # 몸이 서로 겹치는 곳을 찾기 위한 공간 격자
 GCAP = 14
 STACK_GAP = 8                   # 이 고리 수보다 가까운 마디끼리는 겹침으로 보지 않는다
-SLAM_REACH = 3.6                # 내려찍기 때 목이 뻗을 수 있는 최대 거리 (이 게임 단위)
+SLAM_REACH = 4.8                # 내려찍기 때 목이 뻗을 수 있는 최대 거리 (이 게임 단위)
 EXT_SPAN = 22.0                 # 목을 앞으로 뻗을 때 머리에서 이만큼 뒤까지 끌려온다
 WAVE_RISE = 0.3                 # 마디 하나가 잠기는 데 걸리는 시간
 ATTACK_TIME = 0.34
@@ -53,9 +53,10 @@ MAX_TURN = 4.5                  # 머리가 돌 수 있는 최대 각속도 (rad
 BODY_TURN = 14.0                # 이동 중 세운 목 바로 뒤 마디가 지나온 길의 방향으로 돌아서는 빠르기 (1/초)
 TAIL_TURN = 2.2                 # ... 꼬리 끝은 이만큼만 (낮을수록 빙빙 돌 때 꼬리가 묵직하게 늦게 돈다)
 BODY_BEND = math.radians(4.5)   # 이동 중 몸(S자 물결을 넣기 전의 길)이 마디 하나에서 꺾일 수 있는 최대 각도 (작을수록 빳빳)
-FWD = 13.0                      # 모델을 앞(머리 쪽)으로 당기는 거리 (보스 단위): 챔피언 자리(선택 원·그림자·히트박스)가 몸통 밑에 오게
-OFS_TURN = 3.0                  # 당기는 방향이 몸 방향을 따라 도는 빠르기 (1/초)
-OFS_TURN_MAX = 1.6              # ... 그래도 이보다 빨리는 돌지 않는다 (rad/초): 방향을 휙휙 바꿔도 모델이 챔피언 자리 둘레로 휘둘리지 않는다
+# 챔피언 자리(선택 원·그림자·히트박스)에 고정하는 몸통 구간: 세운 목이 땅에 닿은 뒤부터 S자 한 물결 길이만큼의 가운데.
+# 몸 안의 한 점을 챔피언 자리에 못 박아 두므로, 방향을 바꾸면 머리와 목만 그 둘레로 돌고 몸통은 자리를 벗어나지 않는다.
+PIN_K0, PIN_K1 = 14, 23
+PIN_RATE = 12.0                 # 고정 위치가 따라붙는 빠르기 (1/초, 프레임 사이 떨림만 거른다)
 
 _SCALE = _S(SC)
 
@@ -494,7 +495,8 @@ class SerpentAnim:
         self.rang = None                                        # 이동 중 마디 방향 (묵직하게 돌아서게)
         self.lunge_until = -1.0                                 # W 돌진 자세(몸을 곧게 편다)가 끝나는 시각
         self.se_last = 0.0                                      # 세운 목이 끝나는 곳 (머리에서 몸을 따라 잰 거리)
-        self.oyaw = 0.0                                         # 모델을 앞으로 당기는 방향 (_draw_scale)
+        self.ofs = None                                         # 그릴 때 더하는 월드 이동 (몸통 고정 구간이 챔피언 자리에 오게)
+        self.ent_w = (0.0, 0.0)                                 # 챔피언 자리 (월드 x, z)
         self.extra = None                                       # 겹침으로 올라탄 높이 (프레임 사이 부드럽게)
         self.dt_last = 1.0                                      # 마지막 프레임 시간 (접힘 속도 계산용)
         self.fold_rate = 4.0
@@ -589,7 +591,7 @@ class SerpentAnim:
             self._play([(delay, 'lwind'), (dur + 0.12, 'charge')])
         elif kind == "serpent_rear":
             if "x2" in ev:
-                self.slam_tgt = (ev["x2"] / SC, ev["z2"] / SC)
+                self.slam_tgt = self.to_rig(ev["x2"], ev["z2"])
                 self.slam_reach = min(math.hypot(ev["x2"] - ev["x"], ev["z2"] - ev["z"]), SLAM_REACH) / SC
             self._play([(float(ev.get("dur", 0.75)), 'rear'), (0.45, 'slam')])
         elif kind == "dive":
@@ -605,7 +607,7 @@ class SerpentAnim:
     def aim_slam(self, x, z):
         """내려찍기 목표를 (월드 좌표) 대상의 지금 위치로 옮긴다 (대상 지정 E: 쳐든 머리가 대상을 따라간다)."""
         if self.slam_tgt is not None:
-            self.slam_tgt = (x / SC, z / SC)
+            self.slam_tgt = self.to_rig(x, z)
 
     def leap(self, dur, delay=0.0):
         pass
@@ -640,8 +642,25 @@ class SerpentAnim:
         return None
 
     def _draw_scale(self):
-        # 앞으로 당기는 방향(oyaw)은 몸 방향을 천천히, 최대 빠르기를 넘지 않게 따라 돈다: 머리를 휙휙 돌려도 모델 전체가 휘둘리지 않는다
-        return _T(math.sin(self.oyaw) * FWD * SC, 0.0, math.cos(self.oyaw) * FWD * SC) @ _SCALE
+        ox, oz = self.ofs if self.ofs is not None else (0.0, 0.0)
+        return _T(ox, 0.0, oz) @ _SCALE
+
+    def to_rig(self, x, z):
+        """월드 좌표 -> 리그 안쪽 좌표 (보스 단위). 그릴 때 더하는 이동(ofs)을 뺀다."""
+        ox, oz = self.ofs if self.ofs is not None else (0.0, 0.0)
+        return ((x - ox) / SC, (z - oz) / SC)
+
+    def _update_pin(self, dt):
+        """몸통 고정 구간(PIN_K0~PIN_K1)의 가운데가 챔피언 자리에 오도록 그릴 때의 이동(ofs)을 정한다."""
+        n = PIN_K1 - PIN_K0
+        bx = sum(self.cxL[PIN_K0:PIN_K1]) / n * SC
+        bz = sum(self.czL[PIN_K0:PIN_K1]) / n * SC
+        tx, tz = self.ent_w[0] - bx, self.ent_w[1] - bz
+        if self.ofs is None or math.hypot(tx - self.ofs[0], tz - self.ofs[1]) > 3.0:
+            self.ofs = (tx, tz)
+        else:
+            k = 1 - math.exp(-PIN_RATE * dt)
+            self.ofs = (self.ofs[0] + (tx - self.ofs[0]) * k, self.ofs[1] + (tz - self.ofs[1]) * k)
 
     def mouth(self):
         """머리 앞 입의 월드 위치 (독 뱉기 발사점): (x, y, z)"""
@@ -1073,7 +1092,7 @@ class SerpentAnim:
             self.debris = []
             self.seq = []
             self.wave, self.baseSub, self.auto_emerge = 'none', 0.0, None
-            self.byaw = self.oyaw = self.yaw
+            self.byaw = self.yaw
             self.layout_line(self.px, self.pz, self.yaw)
         if a == 2 and self.t - self.last_attack > 0.6 and not self._busy():
             self.attack()
@@ -1122,13 +1141,12 @@ class SerpentAnim:
         for k in self.cur:
             self.cur[k] += (self.tgt[k] - self.cur[k]) * (1 - math.exp(-self.rate[k] * dt))
         self.byaw += _wrap(self.yaw - self.byaw) * (1 - math.exp(-2.2 * dt))
-        turn = _wrap(self.byaw - self.oyaw) * (1 - math.exp(-OFS_TURN * dt))
-        self.oyaw += max(-OFS_TURN_MAX * dt, min(OFS_TURN_MAX * dt, turn))
         self.lift_cur = max(HEAD_REST, self.cur['lift'])
         self.jaw_cur = self.cur['jaw']
         self.hood_cur = self.cur['hood']
         self._push_trail()
         self._solve_body()
+        self._update_pin(dt)
         self._place_head(dt)
 
     lift_cur = HEAD_REST
@@ -1137,11 +1155,12 @@ class SerpentAnim:
         return bool(self.seq) and self.t < self.seq_end
 
     def _track(self, dt, ent):
+        self.ent_w = (ent.x, ent.z)
         x, z = ent.x / SC, ent.z / SC
         face = facing_to_rot(ent.f)
         if not self.have_pos:
             self.have_pos = True
-            self.yaw = self.byaw = self.oyaw = face
+            self.yaw = self.byaw = face
             self.layout_line(x, z, face)
             return
         mx, mz = x - self.px, z - self.pz
