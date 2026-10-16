@@ -56,13 +56,13 @@ def clamp_to_map(x, z, radius=0.0):
 
 
 # 구조물: (key, kind, x(블루 기준, 음수), z, max_hp, radius, 선행조건 key 목록)
-# 선행조건 구조물이 모두 파괴되어야 피해를 받을 수 있다.
+# 선행조건 구조물이 모두 파괴되어야 피해를 받을 수 있다. 넥서스는 억제기도 선행조건이라 억제기가 재생성되면 다시 무적이 된다.
 _STRUCTURE_LAYOUT = [
     ("inner", "turret", -21.4, 0.0, 3600, 1.1, []),
     ("inhib", "inhibitor", -28.4, 0.0, 4000, 1.6, ["inner"]),
     ("nexus_t1", "turret", -35.0, -2.6, 2700, 1.0, ["inhib"]),
     ("nexus_t2", "turret", -35.0, 2.6, 2700, 1.0, ["inhib"]),
-    ("nexus", "nexus", -39.0, 0.0, 5500, 2.4, ["nexus_t1", "nexus_t2"]),
+    ("nexus", "nexus", -39.0, 0.0, 5500, 2.4, ["nexus_t1", "nexus_t2", "inhib"]),
 ]
 
 

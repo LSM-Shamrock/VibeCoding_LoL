@@ -19,11 +19,12 @@ import numpy as np
 from ..champ_anim import DEATH_FADE, DEATH_SHOW
 from ..geometry import MeshBuilder
 from ..gl import Mesh, facing_to_rot
+from . import CHAMP_SCALE
 
 PI = math.pi
-SC = 0.28                       # 보스 단위 -> 이 게임 단위
+SC = 0.28 * CHAMP_SCALE         # 보스 단위 -> 이 게임 단위
 THORAX_R = 1.7
-LEAP_PEAK = 26.0                # 점프 최고 높이 (보스 단위, 월드 약 7.3)
+LEAP_PEAK = 26.0 / CHAMP_SCALE  # 점프 최고 높이 (보스 단위, 몸 크기와 상관없이 월드 약 7.3)
 
 IDLE = {'height': 2.3, 'pitch': 0, 'abdomen': 0.14, 'stance': 1, 'frontRaise': 0, 'squash': 1,
         'tremble': 0, 'legFollow': 0, 'abdPulse': 0}

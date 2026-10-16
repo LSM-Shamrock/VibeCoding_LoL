@@ -1,4 +1,5 @@
 """클라이언트 앱: pygame 창 + moderngl, 장면 관리, 서버 메시지 라우팅."""
+import json
 import math
 import os
 import socket
@@ -13,12 +14,13 @@ from ..shared.net import NetClient
 from . import ui
 from .keybinds import KeyBinds
 from .gl import Renderer, model_matrix
-from .audio import Audio
+from .audio import SETTINGS_PATH, Audio
 from .cursors import CursorManager
 from .models import ModelLibrary
 
 WIDTH, HEIGHT = 1280, 720
 MOUSE_EVENTS = (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION)
+SENS_MIN, SENS_MAX = 0.3, 3.0   # 마우스 감도 (커서가 움직이는 배율) 범위
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
 
 
@@ -99,6 +101,11 @@ class App:
         self.clock = pygame.time.Clock()
         self.keybinds = KeyBinds.load()   # 조작키 (게임 중 ESC 설정 창에서 변경)
         self.cursors = CursorManager()    # 손 / 칼 / 조준경 커서 (시스템 커서는 숨김)
+        # 마우스 감도: 인게임에서는 커서를 창에 가두고 숨겨서(SDL 상대 이동 모드) 움직인 양에 감도를 곱한 가상 커서를 쓴다
+        self.mouse_sens = 1.0
+        self.vmouse = None                # 가상 커서 위치 (창 좌표). None 이면 실제 커서
+        self.load_mouse_sens()
+        ui.set_mouse_source(self.window_mouse_pos)
         self.audio = Audio()              # 효과음 (data/sounds.json). 소리 크기는 ESC 설정 창에서 변경
         self.audio.preload()
         ui.set_sfx(self.audio.play)
@@ -160,12 +167,71 @@ class App:
         """커서가 실제 창(화면) 끝에 닿아 있으면 그 방향 (-1/0/1, -1/0/1)."""
         if not pygame.mouse.get_focused():
             return 0, 0
-        mx, my = pygame.mouse.get_pos()
+        mx, my = self.window_mouse_pos()
         w, h = self.renderer.window_size
         m = 3
         dx = -1 if mx <= m else (1 if mx >= w - 1 - m else 0)
         dy = -1 if my <= m else (1 if my >= h - 1 - m else 0)
         return dx, dy
+
+    # ------------------------------------------------------------------ 마우스 감도 (가상 커서)
+    def load_mouse_sens(self):
+        try:
+            with open(SETTINGS_PATH, encoding="utf-8") as f:
+                self.mouse_sens = float(json.load(f).get("mouse_sens", 1.0))
+        except (OSError, ValueError, TypeError, AttributeError):
+            self.mouse_sens = 1.0
+        self.mouse_sens = max(SENS_MIN, min(SENS_MAX, self.mouse_sens))
+
+    def set_mouse_sens(self, v):
+        self.mouse_sens = round(max(SENS_MIN, min(SENS_MAX, v)), 1)
+
+    def save_mouse_sens(self):
+        try:
+            data = {}
+            try:
+                with open(SETTINGS_PATH, encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, ValueError):
+                pass
+            data["mouse_sens"] = self.mouse_sens
+            with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+
+    def window_mouse_pos(self):
+        """커서 위치 (창 좌표). 인게임에서는 감도를 적용한 가상 커서."""
+        if self.vmouse is not None:
+            return int(self.vmouse[0]), int(self.vmouse[1])
+        return pygame.mouse.get_pos()
+
+    def sync_virtual_mouse(self):
+        """커서를 숨기고 창에 가둔 장면(인게임)이면 가상 커서를 켜고, 아니면 끄면서 실제 커서를 그 자리로 옮긴다."""
+        on = self.scene.grab_mouse and self.cursors.hidden
+        if on and self.vmouse is None:
+            x, y = pygame.mouse.get_pos()
+            self.vmouse = (float(x), float(y))
+        elif not on and self.vmouse is not None:
+            x, y = self.window_mouse_pos()
+            self.vmouse = None
+            try:
+                pygame.mouse.set_pos((x, y))
+            except pygame.error:
+                pass
+
+    def _virtual_event(self, e):
+        """가상 커서가 켜져 있으면 마우스 이벤트의 위치를 가상 커서 위치로 바꾼다 (움직임은 감도만큼 늘이거나 줄인다)."""
+        if self.vmouse is None or e.type not in MOUSE_EVENTS:
+            return e
+        d = dict(e.dict)
+        if e.type == pygame.MOUSEMOTION:
+            w, h = self.renderer.window_size
+            rx, ry = e.rel[0] * self.mouse_sens, e.rel[1] * self.mouse_sens
+            self.vmouse = (max(0.0, min(w - 1.0, self.vmouse[0] + rx)), max(0.0, min(h - 1.0, self.vmouse[1] + ry)))
+            d["rel"] = (int(round(rx)), int(round(ry)))
+        d["pos"] = self.window_mouse_pos()
+        return pygame.event.Event(e.type, d)
 
     def _to_logical_event(self, e):
         if e.type in MOUSE_EVENTS and self.renderer.viewport != (0, 0, WIDTH, HEIGHT):
@@ -338,6 +404,7 @@ class App:
             self.audio.tick_music()
             self.time += dt
             self.renderer.time = self.time
+            self.sync_virtual_mouse()
             for e in pygame.event.get():
                 if e.type == pygame.QUIT:
                     self.running = False
@@ -347,7 +414,7 @@ class App:
                       and e.mod & pygame.KMOD_ALT):
                     self.set_fullscreen(not self.fullscreen)      # Alt+Enter: 전체 화면 전환
                 else:
-                    self.scene.handle_event(self._to_logical_event(e))
+                    self.scene.handle_event(self._to_logical_event(self._virtual_event(e)))
             self.process_messages()
             if self.autotest:
                 self.autotest.step(self, dt)

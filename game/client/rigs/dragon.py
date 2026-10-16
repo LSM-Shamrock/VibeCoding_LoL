@@ -25,10 +25,11 @@ from ..geometry import MeshBuilder
 from ..gl import Mesh, facing_to_rot
 from .spider import _S, _T, _Rx, _Ry, _euler, _from_to, _wrap
 from . import dragon_assets as A
+from . import CHAMP_SCALE
 
 PI = math.pi
 TAU = PI * 2
-SC = 0.075                      # 보스 단위 -> 이 게임 단위
+SC = 0.075 * CHAMP_SCALE        # 보스 단위 -> 이 게임 단위
 
 # ───────────────────────── 치수 (원본과 같은 이름) ─────────────────────────
 FULL_LEN = 112.0                # 꼬리를 줄이기 전의 몸 길이 (마디 위치 · 굵기 비율의 기준)
@@ -368,9 +369,9 @@ class DragonAnim:
     is_rig = True
     @property
     def bar_h(self):                                            # 게임 장면이 체력바를 달 높이 (날아오르면 따라 오른다)
-        return 2.75 + self.air * SC
+        return 2.75 * CHAMP_SCALE + 0.2 + self.air * SC
 
-    pick_h = 1.5                                                # 마우스로 고를 수 있는 높이
+    pick_h = 1.5 * CHAMP_SCALE                                               # 마우스로 고를 수 있는 높이
     preview_dist = 15.0                                         # 챔피언 선택 화면 카메라 거리 (몸이 길어서 멀리서)
 
     def __init__(self, assets):

@@ -32,6 +32,7 @@ TEAM_UI = {0: BLUE_C, 1: RED_C}
 _fonts = {}
 _text_cache = {}
 _mouse_mapper = None
+_mouse_source = None
 _sfx = None
 _hot = None         # 마우스가 올라가 있는 버튼 (자리 기준). 매 프레임 버튼을 새로 만들어도 소리가 반복되지 않게 전역으로 기억
 
@@ -53,8 +54,14 @@ def set_mouse_mapper(fn):
     _mouse_mapper = fn
 
 
+def set_mouse_source(fn):
+    """창 좌표 커서 위치를 돌려주는 함수 연결 (인게임 마우스 감도를 적용한 가상 커서)."""
+    global _mouse_source
+    _mouse_source = fn
+
+
 def mouse_pos():
-    pos = pygame.mouse.get_pos()
+    pos = _mouse_source() if _mouse_source else pygame.mouse.get_pos()
     if _mouse_mapper:
         x, y = _mouse_mapper(pos)
         return int(x), int(y)

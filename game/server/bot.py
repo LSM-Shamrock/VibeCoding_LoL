@@ -2,6 +2,10 @@
 
 스킬은 type 별 규칙(plan / plan_support)으로 쓸 시점과 조준 지점을 정한다.
 챔피언 data 에 "bot_priority": ["R","E","W","Q"] 를 넣으면 스킬을 검토하는 순서를 바꿀 수 있다.
+
+- 부쉬: 쫓던 적이 부쉬로 숨으면 마지막으로 본 곳까지 따라 들어가 확인하고, 할 일이 없을 때는 가까운 부쉬에 숨어 기다리며,
+  쫓기며 도망칠 때는 뒤쪽 부쉬를 지나 시야를 끊는다.
+- 포탑: 체력이 낮은 적이라도 포탑 아래로는 "포탑에 맞으면서 처치하고 빠져나올 수 있을 때"만 들어간다.
 """
 import math
 import random
@@ -21,6 +25,9 @@ class BotBrain:
         self.think_at = 0.0
         self.reaction = self.rng.uniform(0.18, 0.3)
         self.lane_offset = self.rng.uniform(-3.0, 3.0)
+        self.bush_lover = self.rng.random() < 0.7      # 할 일이 없을 때 부쉬에 숨어 기다리는 성격
+        self.seen = {}                  # 적 챔피언 id -> (x, z, 본 시각, 체력 비율) — 시야에서 사라진 적을 쫓을 때 쓴다
+        self.chase = None               # 쫓던 적 챔피언 id
 
     # ------------------------------------------------------------------
     def update(self, sim, dt):
@@ -33,7 +40,7 @@ class BotBrain:
             self.shop(sim)
         if not c.dead:
             self.use_spells(sim)            # 소환사 주문은 기절 중에도 쓴다 (정화)
-        if c.dead or c.dash or c.stunned(sim.time):
+        if c.dead or c.dash or c.stunned(sim.time) or sim.locked(c):
             return
         self.decide(sim)
 
@@ -118,18 +125,93 @@ class BotBrain:
                     return True
         return False
 
-    def in_danger(self, sim):
-        """귀환하면 안 되는 상황: 최근 피해, 근처에 보이는 적 챔피언/미니언, 적 포탑 사거리."""
+    def turret_on_me(self, sim):
+        """나를 노리고 있는 적 포탑 (없으면 None)."""
+        for s in self.enemy_turrets(sim):
+            if s.target == self.c.id and self.c.dist_to(s) <= mapdata.TURRET_RANGE + self.c.radius + 0.5:
+                return s
+        return None
+
+    def dive_ok(self, sim, e):
+        """적 e 가 포탑 사거리 안에 있을 때 들어가서 처치하고 빠져나올 수 있는가.
+        포탑이 미니언을 때리고 있거나 사거리 밖이면 언제나 True."""
+        from .sim import TURRET_CHAMP_DMG, TURRET_PERIOD
         c = self.c
-        if sim.time - c.last_hit_at < 3.0:
+        t = sim.time
+        if not self.turret_threat(sim, e.x, e.z):
             return True
-        for e in sim.champions.values():
-            if e.team != c.team and not e.dead and c.dist_to(e) <= 16 and sim.can_see(c.team, e):
-                return True
-        for m in sim.minions.values():
-            if m.team != c.team and c.dist_to(m) <= 8 and sim.can_see(c.team, m):
-                return True
-        return any(c.dist_to(s) <= mapdata.TURRET_RANGE + 2 for s in self.enemy_turrets(sim))
+        if c.hp / max(1.0, c.max_hp) < 0.45:
+            return False
+        # 지금 쓸 수 있는 스킬 피해 + 평타로 적을 녹이는 데 걸리는 시간
+        burst = 0.0
+        for slot in ("Q", "W", "E", "R"):
+            ab = self.ab(slot)
+            if ab.get("damage") and self.ready(sim, slot):
+                burst += sim.ability_damage(c, ab, c.ranks[slot]) * 0.7          # 방어력·빗나감 감안
+        dps = c.stats["ad"] * c.stats["attack_speed"] * 100.0 / (100.0 + max(0.0, e.armor))
+        kill_time = max(0.0, (e.hp + e.shield_total(t) - burst) / max(1.0, dps))
+        if kill_time > 2.5:
+            return False
+        # 들어가는 시간 + 처치 시간 + 빠져나오는 시간 동안 포탑에 맞는 피해 (연속으로 맞을수록 세진다)
+        reach = c.stats["attack_range"] + c.radius + e.radius
+        go_in = max(0.0, c.dist_to(e) - reach) / max(1.0, c.stats["move_speed"])
+        shots = int(math.ceil((go_in + kill_time + 1.6) / TURRET_PERIOD))
+        per = (TURRET_CHAMP_DMG + 2.5 * min(30.0, t / 60.0)) * 100.0 / (100.0 + max(0.0, c.armor))
+        taken = sum(per * (1 + 0.4 * min(i, 3)) for i in range(shots))
+        return c.hp > taken * 1.25
+
+    def remember(self, sim, enemies):
+        """보이는 적의 위치를 기억해 둔다 (부쉬에 숨으면 마지막으로 본 곳을 쫓아간다)."""
+        t = sim.time
+        for e in enemies:
+            self.seen[e.id] = (e.x, e.z, t, e.hp / max(1.0, e.max_hp))
+
+    def chase_hidden(self, sim, hp_ratio):
+        """쫓던 적이 시야에서 사라졌으면(부쉬 등) 마지막으로 본 곳 너머까지 따라가 확인한다. 따라갔으면 True."""
+        c = self.c
+        t = sim.time
+        e = sim.champions.get(self.chase) if self.chase else None
+        if e is None or e.dead or sim.can_see(c.team, e):
+            self.chase = None
+            return False
+        mem = self.seen.get(e.id)
+        if mem is None or t - mem[2] > 3.5 or hp_ratio < 0.35:
+            self.chase = None
+            return False
+        mx, mz, _, their = mem
+        if their > 0.75 and hp_ratio < their:                  # 체력이 넉넉한 적을 불리하게 쫓지는 않는다
+            self.chase = None
+            return False
+        # 마지막으로 본 곳에서 조금 더 들어간 지점 (부쉬 근처면 부쉬 한가운데 쪽)
+        bush = self.bush_near(mx, mz, 1.6)
+        if bush is not None:
+            bx, bz = mapdata.BUSHES[bush][:2]
+            tx, tz = mx + (bx - mx) * 0.6, mz + (bz - mz) * 0.6
+        else:
+            d = math.hypot(mx - c.x, mz - c.z) or 1.0
+            tx, tz = mx + (mx - c.x) / d * 1.5, mz + (mz - c.z) / d * 1.5
+        if self.turret_threat(sim, tx, tz) or c.dist_xy(tx, tz) < 0.8:     # 포탑 아래거나, 가 봤는데 없다
+            self.chase = None
+            return False
+        sim.cmd_move(c, tx, tz)
+        return True
+
+    @staticmethod
+    def bush_near(x, z, k=1.0):
+        """(x, z) 가 부쉬 타원을 k 배로 키운 범위 안이면 그 부쉬 번호 (없으면 None)."""
+        for i, (bx, bz, rx, rz) in enumerate(mapdata.BUSHES):
+            if ((x - bx) / rx) ** 2 + ((z - bz) / rz) ** 2 <= k * k:
+                return i
+        return None
+
+    def bush_spot(self, sim, x, z, max_dist):
+        """(x, z) 에서 max_dist 안에 있고 적 포탑에 위험하지 않은 부쉬 한가운데 (없으면 None)."""
+        best, bd = None, max_dist
+        for bx, bz, _rx, _rz in mapdata.BUSHES:
+            d = math.hypot(bx - x, bz - z)
+            if d < bd and not self.turret_threat(sim, bx, bz):
+                best, bd = (bx, bz), d
+        return best
 
     def ab(self, slot):
         return self.c.data["abilities"][slot]
@@ -433,16 +515,12 @@ class BotBrain:
         enemies = [e for e in sim.champions.values()
                    if e.team != c.team and not e.dead and c.dist_to(e) <= 13 and sim.can_see(c.team, e)]
         allies = [a for a in sim.champions.values() if a.team == c.team and not a.dead and c.dist_to(a) <= 10]
+        self.remember(sim, enemies)
 
         if c.rope:
             self.rope_tick(sim, enemies)
             return
 
-        # ---- 귀환 중: 안전하면 그대로 두고, 위험해지면 귀환을 멈추고 아래 판단(후퇴 등)으로
-        if c.recall_at is not None:
-            if not self.in_danger(sim):
-                return
-            c.recall_at = None
         # 우물에서는 거의 다 찰 때까지 회복
         if sim.in_fountain(c) and (hp_ratio < 0.9 or c.mana < c.max_mana * 0.6):
             return
@@ -454,12 +532,9 @@ class BotBrain:
                     sim.cast(c, slot, c.x, c.z)
                     break
 
-        # ---- 위험: 후퇴
+        # ---- 위험: 우물로 걸어서 후퇴 (귀환 없음)
         if hp_ratio < 0.28:
-            # 안전할 때만 귀환, 아니면 먼저 우물 쪽으로 물러난다
-            if not sim.in_fountain(c) and not self.in_danger(sim):
-                sim.recall(c)
-                return
+            self.chase = None
             relic = self.safe_relic(sim, 16)
             if relic and not enemies:
                 sim.cmd_move(c, relic.x, relic.z)
@@ -474,6 +549,12 @@ class BotBrain:
                 return
             if close:
                 self.poke(sim, close[0], c.dist_to(close[0]))
+                # 쫓기는 중이면 뒤쪽(우물 쪽)의 가까운 부쉬를 지나 시야를 끊는다
+                if mapdata.bush_at(c.x, c.z) < 0:
+                    for bx, bz, _rx, _rz in mapdata.BUSHES:
+                        if (bx - c.x) * direction < 0.5 and math.hypot(bx - c.x, bz - c.z) < 6.0:
+                            sim.cmd_move(c, bx, bz)
+                            return
             sim.cmd_move(c, fx + direction * 4, fz)
             return
 
@@ -487,11 +568,11 @@ class BotBrain:
                 sim.cmd_move(c, relic.x, relic.z)
                 return
 
-        # ---- 교전
+        # ---- 교전 (포탑 아래의 적은 처치하고 빠져나올 수 있을 때만)
         target = None
         best = 1e9
         for e in enemies:
-            if self.turret_threat(sim, e.x, e.z) and e.hp / e.max_hp > 0.25:
+            if not self.dive_ok(sim, e):
                 continue
             score = e.hp / max(1.0, e.max_hp) * 10 + c.dist_to(e)
             if score < best:
@@ -503,6 +584,7 @@ class BotBrain:
             engage = (their < 0.35 or (hp_ratio >= their * 0.85 and not outnumbered) or dist <= rng_atk * 0.7)
             self.poke(sim, target, dist)
             if engage:
+                self.chase = target.id
                 if self.try_skills(sim, target, enemies, allies, hp_ratio):
                     return
                 if c.mark and their < 0.45 and hp_ratio > 0.5:
@@ -518,6 +600,16 @@ class BotBrain:
                 # 불리하면 거리를 벌린다 (원거리 챔피언만)
                 sim.cmd_move(c, c.x - direction * 3, c.z)
                 return
+        elif self.chase_hidden(sim, hp_ratio):
+            return
+
+        # ---- 포탑이 나를 노리면 사거리 밖으로 빠진다 (포탑 아래에서 싸울 이유가 없다)
+        tur = self.turret_on_me(sim)
+        if tur is not None:
+            away = math.hypot(c.x - tur.x, c.z - tur.z) or 1.0
+            out = mapdata.TURRET_RANGE + c.radius + 1.5
+            sim.cmd_move(c, tur.x + (c.x - tur.x) / away * out, tur.z + (c.z - tur.z) / away * out)
+            return
 
         # ---- 파밍 / 푸시
         allied_minions = [m for m in sim.minions.values() if m.team == c.team]
@@ -560,6 +652,11 @@ class BotBrain:
             for s in self.enemy_turrets(sim):
                 if abs(s.x - hold_x) < mapdata.TURRET_RANGE + 1.5:
                     hold_x = s.x - direction * (mapdata.TURRET_RANGE + 1.5)
+        # 할 일이 없으면 기다릴 자리 근처의 부쉬에 숨는다 (적이 지나가면 덮친다)
+        if self.bush_lover and hp_ratio > 0.5:
+            spot = self.bush_spot(sim, hold_x, hold_z, 7.0)
+            if spot is not None and (spot[0] - hold_x) * direction < 3.0:
+                hold_x, hold_z = spot
         if c.dist_xy(hold_x, hold_z) > 1.2:
             if c.move_target is None or math.hypot(c.move_target[0] - hold_x, c.move_target[1] - hold_z) > 1.0:
                 sim.cmd_move(c, hold_x, hold_z)

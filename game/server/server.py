@@ -309,7 +309,6 @@ class GameServer:
                 ch = room.sim.by_key.get(m.key)
                 if ch:
                     ch.clear_orders()
-                    ch.recall_at = None
             else:
                 room.members.remove(m)
         if not room.humans():

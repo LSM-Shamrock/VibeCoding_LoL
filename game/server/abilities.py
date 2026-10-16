@@ -71,7 +71,6 @@ def interrupt(u):
     if isinstance(u, Champion):
         u.dash = None
         u.clear_orders()
-        u.recall_at = None
     elif hasattr(u, "windup"):
         u.windup = None
 
@@ -989,6 +988,8 @@ def serpent_slam(cx):
         fx(sim_, "shockwave", eff.x, eff.z, r=r, r2=wr, dur=ab.get("wave_delay", 0.14) * steps, tm=c.team)
     eff = GroundEffect(sim.new_id(), c.team, c, gx, gz, r, sim.time + delay, "serpent", strike)
     sim.effects[eff.id] = eff
+    c.clear_orders()
+    c.lock_until = sim.time + delay                    # 머리를 쳐들었다 내리꽂는 동안은 움직이거나 다른 행동을 할 수 없다
     fx(sim, "serpent_rear", c.x, c.z, d=c.id, dur=delay, x2=gx, z2=gz, tm=c.team)
     return True
 

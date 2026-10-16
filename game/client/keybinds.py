@@ -15,14 +15,14 @@ PATH = os.path.join(ROOT, "keybinds.json")
 # (행동, 설정 창에 보일 이름) — 화면에 나오는 순서
 ACTIONS = [
     ("Q", "스킬 Q"), ("W", "스킬 W"), ("E", "스킬 E"), ("R", "스킬 R"),
-    ("D", "소환사 주문 1"), ("F", "소환사 주문 2"), ("recall", "귀환"),
+    ("D", "소환사 주문 1"), ("F", "소환사 주문 2"),
     ("attack_move", "공격 이동"), ("stop", "정지"),
     ("shop", "상점"), ("score", "점수판"),
     ("cam_lock", "카메라 고정 전환"), ("cam_center", "카메라 내 챔피언"),
 ]
 DEFAULTS = {
     "Q": (pygame.KSCAN_Q, "Q"), "W": (pygame.KSCAN_W, "W"), "E": (pygame.KSCAN_E, "E"), "R": (pygame.KSCAN_R, "R"),
-    "D": (pygame.KSCAN_D, "D"), "F": (pygame.KSCAN_F, "F"), "recall": (pygame.KSCAN_B, "B"),
+    "D": (pygame.KSCAN_D, "D"), "F": (pygame.KSCAN_F, "F"),
     "attack_move": (pygame.KSCAN_A, "A"), "stop": (pygame.KSCAN_S, "S"),
     "shop": (pygame.KSCAN_P, "P"), "score": (pygame.KSCAN_TAB, "Tab"),
     "cam_lock": (pygame.KSCAN_Y, "Y"), "cam_center": (pygame.KSCAN_SPACE, "Space"),
@@ -62,7 +62,7 @@ class KeyBinds:
             for action, (sc, name) in data.items():
                 if action in DEFAULTS:
                     kb.binds[action] = (int(sc), str(name))
-            # 저장 파일에 없는 새 행동(예: 귀환)의 기본 키와 겹치면, 겹친 쪽을 그 행동의 기본 키로 되돌린다
+            # 저장 파일에 없는 새 행동의 기본 키와 겹치면, 겹친 쪽을 그 행동의 기본 키로 되돌린다
             for new in (a for a in DEFAULTS if a not in data):
                 for other, (sc, _) in kb.binds.items():
                     if other != new and sc == DEFAULTS[new][0]:

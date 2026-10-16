@@ -23,15 +23,16 @@ from ...shared import data as gamedata
 from ...shared import mapdata
 from ...shared.spells import DEFAULT_SPELLS, SPELLS
 from ...shared.constants import (
-    BLUE, FLASH_COOLDOWN, FLASH_RANGE, INVENTORY_SLOTS, MARK_COOLDOWN, MARK_RANGE, MARK_RECAST_TIME, RECALL_TIME, RED,
+    BLUE, FLASH_COOLDOWN, FLASH_RANGE, INVENTORY_SLOTS, MARK_COOLDOWN, MARK_RANGE, MARK_RECAST_TIME, RED,
     SELL_RATIO, SIGHT,
 )
 from .. import ui
-from ..app import HEIGHT, WIDTH, Scene
+from ..app import HEIGHT, SENS_MAX, SENS_MIN, WIDTH, Scene
 from ..geometry import MeshBuilder
 from ..keybinds import ACTIONS
 from ..gl import Mesh, facing_to_rot, model_matrix
 from ..procedural import build_bush
+from ..rigs import CHAMP_SCALE
 from ..rigs.spider import SC as SC_RIG, baby_period
 from ..vfx import SUPPORT_FX, SUPPORT_SPELLS, SUPPORT_ZONES, Vfx, fx_color
 
@@ -81,8 +82,11 @@ INV_COLS = 4                            # 인벤토리 4칸 x 2줄
 CHAT_X, CHAT_Y, CHAT_W = 12, 572, 440     # 채팅 입력칸 (왼쪽 아래, 로그는 그 위로 쌓임)
 CHAT_FONT, CHAT_LINE = 16, 22              # 채팅 글자 크기, 줄 간격
 CHAT_SHOW = 10.0                           # 채팅창이 닫혀 있을 때 새 줄이 보이는 시간 (초)
-SETTINGS_RECT = pygame.Rect(WIDTH // 2 - 260, 70, 520, 620)
-SETTINGS_TABS = [("keys", "조작키"), ("sound", "사운드")]
+SETTINGS_RECT = pygame.Rect(WIDTH // 2 - 320, 70, 640, 560)
+SETTINGS_TABS = [("keys", "조작키"), ("mouse", "마우스"), ("sound", "사운드")]
+BAR_H = 2.45 * CHAMP_SCALE + 0.2      # 챔피언 체력바 높이
+PICK_H = 2.0 * CHAMP_SCALE           # 챔피언을 마우스로 고를 수 있는 높이
+ZOOM_MAX = 22.0                 # 마우스 휠로 멀리 볼 수 있는 한계 (처음 화면)
 MOVE_COLOR = (0.35, 0.65, 1.0)          # 이동 지점 표시 색
 MOVE_COLOR_UI = (110, 175, 255)
 # 능력치 패널: (아이콘 파일 키, 이름, 값 함수). 아이콘은 assets/ui/stats/<키>.png 를 넣으면 쓰인다.
@@ -371,8 +375,8 @@ class GameScene(Scene):
         self.my_item_count = None
         self.foot_t = 0.0           # 다음 발소리까지 남은 시간
         self.shop_was_open = False
-        self.volume_rect = None     # 설정 창의 소리 크기 막대
-        self.volume_drag = False
+        self.slider_rects = {}      # 설정 창의 막대 (volume 소리 크기 / sens 마우스 감도)
+        self.slider_drag = None     # 끌고 있는 막대
 
         self.shop_open = False
         self.show_score = False
@@ -399,12 +403,12 @@ class GameScene(Scene):
         self.chat_lines = []        # (시각, [(글자, 색), ...]) — 플레이어 채팅과 킬·파괴 알림
         self.chat_open = False
         self.chat_in = ui.TextInput((CHAT_X, CHAT_Y, CHAT_W, 26), "", 100, "Enter 로 보내기 · Esc 취소")
-        self.zoom = 22.0
+        self.zoom = ZOOM_MAX
         self.fake_mouse = None      # 자동 테스트용
         self.binds = app.keybinds
         self.held = set()           # 누르고 있는 행동 (카메라 중심 등)
         self.settings_open = False  # ESC 설정 창
-        self.settings_tab = "keys"  # 설정 창 탭: keys(조작키) / sound(사운드)
+        self.settings_tab = "keys"  # 설정 창 탭: keys(조작키) / mouse(마우스) / sound(사운드)
         self.rebinding = None       # 새 키를 기다리는 행동
         self.settings_rects = []
         self.stat_rects = []
@@ -433,7 +437,7 @@ class GameScene(Scene):
                 shapes[(rx, rz)] = Mesh.from_builder(app.renderer, build_bush(rx, rz))
         self.bush_meshes = [shapes[(rx, rz)]
                             for i, (bx, bz, rx, rz) in enumerate(mapdata.BUSHES)]
-        self.board = {}             # 점수판(Tab): 챔피언 id -> [id, 레벨, 킬, 데스, 어시, CS, 골드, 아이템, 사망, 부활초]
+        self.board = {}             # 점수판(Tab): 챔피언 id -> [id, 레벨, 킬, 데스, 어시, CS, 골드, 아이템, 사망, 부활초, 현상금]
         # 시야 격자: 칸 중심 좌표와 각 칸의 부쉬 번호를 미리 계산
         self.vis_nx = int((mapdata.VIS_X1 - mapdata.VIS_X0) / mapdata.VIS_CELL)
         self.vis_nz = int((mapdata.VIS_Z1 - mapdata.VIS_Z0) / mapdata.VIS_CELL)
@@ -686,8 +690,11 @@ class GameScene(Scene):
                 self.sfx("kill_self")
                 self.last_kill_at = now
             self.kill_announce(ev)
-            self.add_chat([(ev["kn"], ui.TEAM_UI.get(ev["kt"], ui.TEXT)), (" 님이 ", ui.TEXT_DIM),
-                           (ev["vn"], ui.TEAM_UI.get(ev["vt"], ui.TEXT)), (" 님을 처치했습니다.", ui.TEXT_DIM)])
+            line = [(ev["kn"], ui.TEAM_UI.get(ev["kt"], ui.TEXT)), (" 님이 ", ui.TEXT_DIM),
+                    (ev["vn"], ui.TEAM_UI.get(ev["vt"], ui.TEXT)), (" 님을 처치했습니다.", ui.TEXT_DIM)]
+            if ev.get("bt"):
+                line.append((f" 제압 골드 {ev['bt']}", ui.GOLD))
+            self.add_chat(line)
             if ev["v"] == self.my_id:
                 self.announces.append((now, "처치당했습니다!", ui.RED_C))
             elif ev["k"] == self.my_id:
@@ -782,9 +789,6 @@ class GameScene(Scene):
                 self.add_fx("ring_up", x, z, 0.8, radius=0.9, color=(1.0, 0.6, 0.3))
         elif kind == "relic":
             self.add_fx("ring_up", x, z, 0.8, radius=1.6, color=(0.4, 1.0, 0.5))
-        elif kind == "recall":
-            self.add_fx("ring_up", x, z, 0.7, radius=1.4, color=(0.4, 0.7, 1.0))
-            self.add_fx("ring_up", ev["x2"], ev["z2"], 0.9, radius=1.6, color=(0.4, 0.7, 1.0))
         elif kind == "plate":
             self.add_fx("burst", x, z, 0.6, radius=2.2, color=(1.0, 0.82, 0.35))
         elif kind == "slam":
@@ -1000,8 +1004,6 @@ class GameScene(Scene):
                 self.sfx_unit(cid, "death")
             elif old["dead"] and not d["dead"]:
                 self.sfx_unit(cid, "respawn")
-            if d.get("rc", 0) > 0 and not old.get("rc", 0):
-                self.sfx_unit(cid, "recall_start")
         if cid == self.my_id:
             ranks = d["ab"]
             if self.my_ranks is not None and any(ranks.get(k, 0) > self.my_ranks.get(k, 0) for k in ranks):
@@ -1044,7 +1046,7 @@ class GameScene(Scene):
                 self.sfx(name)                              # 포탑에 타게팅되면 본인에게만 경고음
         elif kind == "relic" and ev.get("d") == self.my_id:
             self.sfx(name)
-        elif kind in ("recall", "flash", "teleport") and "x2" in ev:
+        elif kind in ("flash", "teleport") and "x2" in ev:
             self.sfx(name, ev["x2"], ev["z2"])          # 도착한 곳에서 소리
         else:
             self.sfx(name, ev["x"], ev["z"])
@@ -1146,7 +1148,7 @@ class GameScene(Scene):
         cands = []
         for eid, e in self.champs.items():
             if e.visible and e.d and not e.d["dead"]:
-                cands.append(("champion", eid, e.x, e.z, getattr(e.ca, "pick_h", 2.0) if e.ca else 2.0, HOVER_RADIUS["champion"]))
+                cands.append(("champion", eid, e.x, e.z, getattr(e.ca, "pick_h", PICK_H) if e.ca else PICK_H, HOVER_RADIUS["champion"]))
         for eid, e in self.minions.items():
             cands.append(("minion", eid, e.x, e.z, MINION_HEIGHT[e.d[1]], HOVER_RADIUS["minion"]))
         for eid, s in self.structs.items():
@@ -1266,9 +1268,6 @@ class GameScene(Scene):
                 self.move_dest = None
             elif act == "attack_move":
                 self.amove_pending = True
-            elif act == "recall":
-                self.send_cmd(c="recall")
-                self.move_dest = None
             elif act == "shop":
                 self.shop_open = not self.shop_open
             elif act == "score":
@@ -1330,7 +1329,7 @@ class GameScene(Scene):
         elif e.type == pygame.MOUSEMOTION and self.minimap_drag:
             self.minimap_camera(e.pos)
         elif e.type == pygame.MOUSEWHEEL:
-            self.zoom = max(16.0, min(36.0, self.zoom - e.y * 2.0))
+            self.zoom = max(16.0, min(ZOOM_MAX, self.zoom - e.y * 2.0))     # 처음 화면보다 넓게는 볼 수 없다
 
     # ---- 설정 (ESC)
     def open_settings(self):
@@ -1353,10 +1352,11 @@ class GameScene(Scene):
                 self.sfx("ui_close")
         elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
             self.rebinding = None
-            if self.volume_rect and self.volume_rect.inflate(12, 22).collidepoint(e.pos):
-                self.volume_drag = True
-                self.set_volume_from_mouse(e.pos[0])
-                return
+            for kind, rect in self.slider_rects.items():
+                if rect.inflate(12, 22).collidepoint(e.pos):
+                    self.slider_drag = kind
+                    self.set_slider_from_mouse(kind, e.pos[0])
+                    return
             for kind, rect in self.settings_rects:
                 if rect.collidepoint(e.pos):
                     if kind == "close":
@@ -1376,18 +1376,27 @@ class GameScene(Scene):
                     else:
                         self.rebinding = kind
                         self.sfx("ui_click")
-        elif e.type == pygame.MOUSEMOTION and self.volume_drag:
-            self.set_volume_from_mouse(e.pos[0])
-        elif e.type == pygame.MOUSEBUTTONUP and e.button == 1 and self.volume_drag:
-            self.volume_drag = False
-            self.audio.save_settings()
-            self.sfx("ui_confirm")                      # 바꾼 크기로 들려 준다
+        elif e.type == pygame.MOUSEMOTION and self.slider_drag:
+            self.set_slider_from_mouse(self.slider_drag, e.pos[0])
+        elif e.type == pygame.MOUSEBUTTONUP and e.button == 1 and self.slider_drag:
+            kind, self.slider_drag = self.slider_drag, None
+            if kind == "volume":
+                self.audio.save_settings()
+                self.sfx("ui_confirm")                  # 바꾼 크기로 들려 준다
+            else:
+                self.app.save_mouse_sens()
 
-    def set_volume_from_mouse(self, mx):
-        r = self.volume_rect
-        self.audio.set_volume((mx - r.x) / max(1, r.width))
-        if self.audio.muted and self.audio.volume > 0:
-            self.audio.muted = False
+    def set_slider_from_mouse(self, kind, mx):
+        r = self.slider_rects.get(kind)
+        if r is None:
+            return
+        k = max(0.0, min(1.0, (mx - r.x) / max(1, r.width)))
+        if kind == "volume":
+            self.audio.set_volume(k)
+            if self.audio.muted and self.audio.volume > 0:
+                self.audio.muted = False
+        else:
+            self.app.set_mouse_sens(SENS_MIN + (SENS_MAX - SENS_MIN) * k)
 
     def draw_settings(self, surf):
         shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
@@ -1398,36 +1407,38 @@ class GameScene(Scene):
         ui.text(surf, "설정", (p.x + 24, p.y + 16), 22, bold=True)
         mouse = ui.mouse_pos()
         self.settings_rects = []
-        self.volume_rect = None
-        # 탭: 조작키 / 사운드
+        self.slider_rects = {}
+        # 탭: 왼쪽 세로 목록 (조작키 / 마우스 / 사운드), 오른쪽이 내용
         for i, (tab, label) in enumerate(SETTINGS_TABS):
-            tr = pygame.Rect(p.x + 24 + i * 128, p.y + 56, 120, 32)
+            tr = pygame.Rect(p.x + 20, p.y + 64 + i * 44, 124, 36)
             on = self.settings_tab == tab
             pygame.draw.rect(surf, (45, 75, 125) if on else ((34, 46, 70) if tr.collidepoint(mouse) else (22, 30, 46)),
                              tr, border_radius=6)
             pygame.draw.rect(surf, ui.HIGHLIGHT if on else ui.BORDER, tr, 1, border_radius=6)
             ui.text(surf, label, tr.center, 16, ui.TEXT if on else ui.TEXT_DIM, anchor="center", bold=on)
             self.settings_rects.append(("tab:" + tab, tr))
-        pygame.draw.line(surf, ui.BORDER, (p.x + 24, p.y + 96), (p.right - 24, p.y + 96))
+        pygame.draw.line(surf, ui.BORDER, (p.x + 160, p.y + 64), (p.x + 160, p.bottom - 20))
+        body = pygame.Rect(p.x + 180, p.y + 64, p.right - 24 - (p.x + 180), p.height - 64 - 72)
         if self.settings_tab == "sound":
-            self.draw_settings_sound(surf, p, mouse)
+            self.draw_settings_sound(surf, body, mouse)
+        elif self.settings_tab == "mouse":
+            self.draw_settings_mouse(surf, body)
         else:
-            self.draw_settings_keys(surf, p, mouse)
+            self.draw_settings_keys(surf, body, mouse)
         buttons = [("close", "닫기", pygame.Rect(p.right - 144, p.bottom - 52, 120, 36))]
-        if self.settings_tab != "sound":
-            buttons.insert(0, ("reset", "기본값", pygame.Rect(p.x + 24, p.bottom - 52, 120, 36)))
+        if self.settings_tab == "keys":
+            buttons.insert(0, ("reset", "기본값", pygame.Rect(body.x, p.bottom - 52, 120, 36)))
         for kind, label, rect in buttons:
             pygame.draw.rect(surf, (40, 60, 95) if rect.collidepoint(mouse) else (28, 38, 58), rect, border_radius=6)
             pygame.draw.rect(surf, ui.BORDER, rect, 1, border_radius=6)
             ui.text(surf, label, rect.center, 16, anchor="center")
             self.settings_rects.append((kind, rect))
 
-    def draw_settings_keys(self, surf, p, mouse):
-        ui.text(surf, "스킬 레벨업: Ctrl + 스킬 키", (p.right - 24, p.y + 64), 13, ui.TEXT_DIM, anchor="topright")
-        y = p.y + 112
+    def draw_settings_keys(self, surf, body, mouse):
+        y = body.y
         for action, label in ACTIONS:
-            ui.text(surf, label, (p.x + 30, y + 14), 15, anchor="midleft")
-            box = pygame.Rect(p.right - 170, y, 140, 28)
+            ui.text(surf, label, (body.x + 6, y + 14), 15, anchor="midleft")
+            box = pygame.Rect(body.right - 146, y, 140, 28)
             waiting = self.rebinding == action
             hover = box.collidepoint(mouse)
             pygame.draw.rect(surf, (40, 60, 95) if waiting or hover else (24, 32, 48), box, border_radius=4)
@@ -1437,27 +1448,35 @@ class GameScene(Scene):
             self.settings_rects.append((action, box))
             y += 34
 
-    def draw_settings_sound(self, surf, p, mouse):
-        # 효과음 크기: 막대를 끌어서 바꾸고, 아래 버튼으로 끄고 켠다
-        y = p.y + 124
-        ui.text(surf, "효과음 크기", (p.x + 30, y), 17, bold=True)
-        track = pygame.Rect(p.x + 30, y + 40, 340, 14)
-        self.volume_rect = track
+    def draw_slider(self, surf, kind, x, y, k, label, on=True):
+        """이름 + 끌 수 있는 막대 + 값 글자. k 는 0~1."""
+        track = pygame.Rect(x, y, 300, 14)
+        self.slider_rects[kind] = track
         pygame.draw.rect(surf, (24, 32, 48), track, border_radius=6)
-        shown = 0.0 if self.audio.muted else self.audio.volume
         pygame.draw.rect(surf, ui.BORDER, track, 1, border_radius=6)
-        fill = pygame.Rect(track.x, track.y, int(track.width * shown), track.height)
+        fill = pygame.Rect(track.x, track.y, int(track.width * k), track.height)
         if fill.width > 0:
-            pygame.draw.rect(surf, (90, 140, 230) if not self.audio.muted else (80, 85, 100), fill, border_radius=6)
-        pygame.draw.circle(surf, ui.HIGHLIGHT, (track.x + int(track.width * shown), track.centery), 8)
-        ui.text(surf, f"{round(shown * 100)}%", (track.right + 18, track.centery), 16, anchor="midleft")
-        mute_box = pygame.Rect(p.x + 30, y + 84, 160, 34)
+            pygame.draw.rect(surf, (90, 140, 230) if on else (80, 85, 100), fill, border_radius=6)
+        pygame.draw.circle(surf, ui.HIGHLIGHT, (track.x + int(track.width * k), track.centery), 8)
+        ui.text(surf, label, (track.right + 18, track.centery), 16, anchor="midleft")
+
+    def draw_settings_mouse(self, surf, body):
+        y = body.y + 8
+        ui.text(surf, "마우스 감도", (body.x + 6, y), 17, bold=True)
+        sens = self.app.mouse_sens
+        self.draw_slider(surf, "sens", body.x + 6, y + 40, (sens - SENS_MIN) / (SENS_MAX - SENS_MIN), f"{sens:.1f}")
+
+    def draw_settings_sound(self, surf, body, mouse):
+        # 효과음 크기: 막대를 끌어서 바꾸고, 아래 버튼으로 끄고 켠다
+        y = body.y + 8
+        ui.text(surf, "효과음 크기", (body.x + 6, y), 17, bold=True)
+        shown = 0.0 if self.audio.muted else self.audio.volume
+        self.draw_slider(surf, "volume", body.x + 6, y + 40, shown, f"{round(shown * 100)}%", not self.audio.muted)
+        mute_box = pygame.Rect(body.x + 6, y + 84, 160, 34)
         pygame.draw.rect(surf, (40, 60, 95) if mute_box.collidepoint(mouse) else (24, 32, 48), mute_box, border_radius=4)
         pygame.draw.rect(surf, ui.BORDER, mute_box, 1, border_radius=4)
         ui.text(surf, "소리 켜기" if self.audio.muted else "소리 끄기", mute_box.center, 16, anchor="center")
         self.settings_rects.append(("mute", mute_box))
-        ui.text(surf, "막대를 끌어서 크기를 바꿉니다. 로비와 게임 속 효과음 모두에 적용돼요.", (p.x + 30, y + 140), 14,
-                ui.TEXT_DIM)
 
     def click_ui(self, pos):
         for slot, rect in self.levelup_rects:
@@ -1720,7 +1739,7 @@ class GameScene(Scene):
                     if ca.is_rig:
                         ca.draw(r, (1.0, 1.0, 1.0, ca.alpha))
                     else:
-                        r.draw(mesh, model_matrix(e.x, 0.0, e.z, rot_y=facing_to_rot(e.f)),
+                        r.draw(mesh, model_matrix(e.x, 0.0, e.z, rot_y=facing_to_rot(e.f), scale=CHAMP_SCALE),
                                tint=(1.0, 1.0, 1.0, ca.alpha), bones=ca.bones())
                 continue
             st = d["st"]
@@ -1735,7 +1754,8 @@ class GameScene(Scene):
             big = 1.6 if (ca and ca.is_rig) else 1.0           # 거미 같은 큰 몸은 그림자도 크게
             if big > 1:
                 lift = ca.lift * SC_RIG + e.lift               # 점프 중 높이는 리그가 직접 계산한다 (+ 에어본)
-            r.draw_transparent(m.shadow, model_matrix(e.x, 0.03, e.z, scale=0.65 * big), (0, 0, 0, 0.35 / (1 + lift)))
+            r.draw_transparent(m.shadow, model_matrix(e.x, 0.03, e.z, scale=0.65 * big * CHAMP_SCALE),
+                               (0, 0, 0, 0.35 / (1 + lift)))
             r.draw_transparent(m.ring, model_matrix(e.x, 0.05, e.z, scale=0.85), ring_col)
             anim = d["a"]
             bob = abs(math.sin(t * 10 + cid)) * 0.06 if anim == 1 else 0.0
@@ -1769,9 +1789,10 @@ class GameScene(Scene):
                 ca.draw(r, tuple(tint), emis)
                 r.y_offset = 0.0
             else:
-                r.draw(mesh, model_matrix(e.x, bob + lift, e.z, rot_y=facing_to_rot(e.f), rot_x=tilt), tint=tuple(tint),
-                       emissive=emis, bones=ca.bones() if ca else None)
-            head = 2.15 + lift
+                r.draw(mesh, model_matrix(e.x, bob + lift, e.z, rot_y=facing_to_rot(e.f), rot_x=tilt, scale=CHAMP_SCALE),
+                       tint=tuple(tint), emissive=emis, bones=ca.bones() if ca else None)
+            head = 2.15 * CHAMP_SCALE + lift
+            mid = 1.0 * CHAMP_SCALE + lift                      # 몸 한가운데 높이 (보호막·강화 구)
             if "stun" in st:
                 for k in range(3):
                     a = t * 5 + k * math.tau / 3
@@ -1791,7 +1812,7 @@ class GameScene(Scene):
             if "marked" in st:
                 for j in range(2):
                     ph = (t * 1.4 + j * 0.5) % 1.0
-                    r.draw_transparent(m.ring, model_matrix(e.x, 1.0 + lift, e.z, scale=0.4 + ph * 0.5),
+                    r.draw_transparent(m.ring, model_matrix(e.x, mid, e.z, scale=(0.4 + ph * 0.5) * CHAMP_SCALE),
                                        (1.0, 0.8, 0.35, 0.9 * (1 - ph)), additive=True)
             if d.get("sh", 0) > 0 or "undying" in st or "counter" in st:
                 if "undying" in st:
@@ -1801,12 +1822,12 @@ class GameScene(Scene):
                 else:
                     sc, col = (0.7, 0.9, 1.0, 0.17), 0.9
                 sc = (*fx_color(sc[:3], info["tm"] == self.my_team, False)[0], sc[3])      # 아군 파랑 / 적 빨강
-                r.draw_transparent(m.orb, model_matrix(e.x, 1.0 + lift, e.z, scale=col), sc, additive=True)
+                r.draw_transparent(m.orb, model_matrix(e.x, mid, e.z, scale=col * CHAMP_SCALE), sc, additive=True)
             if "echo" in st:
-                r.draw_transparent(m.orb, model_matrix(e.x, 1.0 + lift, e.z, scale=0.85), (*fx_color((0.9, 0.6, 0.25), info["tm"] == self.my_team, False)[0], 0.13),
+                r.draw_transparent(m.orb, model_matrix(e.x, mid, e.z, scale=0.85 * CHAMP_SCALE), (*fx_color((0.9, 0.6, 0.25), info["tm"] == self.my_team, False)[0], 0.13),
                                    additive=True)
             if "immune" in st:
-                r.draw_transparent(m.orb, model_matrix(e.x, 1.0 + lift, e.z, scale=0.9), (1.0, 1.0, 1.0, 0.13),
+                r.draw_transparent(m.orb, model_matrix(e.x, mid, e.z, scale=0.9 * CHAMP_SCALE), (1.0, 1.0, 1.0, 0.13),
                                    additive=True)
             rp = d.get("rp")
             if rp:
@@ -1818,17 +1839,8 @@ class GameScene(Scene):
                 for px, pz in ((rp[0], rp[1]), (rp[2], rp[3])):
                     r.draw(self.pillar, model_matrix(px, 0.0, pz, sx=0.08, sy=2.2, sz=0.08), tint=(0.5, 0.34, 0.2, 1))
             if "emp" in st:
-                r.draw_transparent(m.orb, model_matrix(e.x, 1.0 + lift, e.z, scale=0.9), (0.5, 0.85, 1.0, 0.18),
+                r.draw_transparent(m.orb, model_matrix(e.x, mid, e.z, scale=0.9 * CHAMP_SCALE), (0.5, 0.85, 1.0, 0.18),
                                    additive=True)
-            if d.get("rc", 0) > 0:
-                # 귀환 중: 발밑 원 + 위로 올라가는 고리
-                k = 1 - d["rc"] / RECALL_TIME
-                r.draw_transparent(m.disc, model_matrix(e.x, 0.06, e.z, scale=1.1), (0.35, 0.6, 1.0, 0.25 + 0.2 * k),
-                                   additive=True)
-                for j in range(2):
-                    ph = (t * 0.8 + j * 0.5) % 1.0
-                    r.draw_transparent(m.ring, model_matrix(e.x, 0.1 + ph * 2.2, e.z, scale=0.9),
-                                       (0.45, 0.7, 1.0, 0.8 * (1 - ph)), additive=True)
 
         # 투사체
         for p in self.projs.values():
@@ -2294,11 +2306,6 @@ class GameScene(Scene):
             surf.blit(shade, (0, 230))
             ui.text(surf, f"부활까지 {math.ceil(me['rt'])}초", (WIDTH // 2, 270), 34, (230, 230, 240), anchor="center",
                     bold=True)
-        if me and not me["dead"] and me.get("rc", 0) > 0:
-            k = 1 - me["rc"] / RECALL_TIME
-            r = pygame.Rect(WIDTH // 2 - 130, 560, 260, 14)
-            ui.bar(surf, r, k, (90, 150, 255))
-            ui.text(surf, f"귀환 {me['rc']:.1f}", (r.centerx, r.y - 3), 14, anchor="midbottom", bold=True)
         if self.shop_open:
             self.draw_shop(surf)
         if self.show_score:
@@ -2346,7 +2353,7 @@ class GameScene(Scene):
             d = e.d
             if not d or d["dead"] or not e.visible:
                 continue
-            p = cam.world_to_screen(e.x, getattr(e.ca, "bar_h", 2.45) if e.ca else 2.45, e.z)     # 머리가 높이 솟는 리그(이무기)는 체력바도 높이
+            p = cam.world_to_screen(e.x, getattr(e.ca, "bar_h", BAR_H) if e.ca else BAR_H, e.z)     # 머리가 높이 솟는 리그(이무기)는 체력바도 높이
             if not p:
                 continue
             info = self.champ_info[cid]
@@ -3134,7 +3141,7 @@ class GameScene(Scene):
         for team in (BLUE, RED):
             x0 = cols[team]
             y = p.y + 70
-            for cid, lv, k, dth, a, cs, gold, inv, dead, rt in rows_by_team[team]:
+            for cid, lv, k, dth, a, cs, gold, inv, dead, rt, bounty in rows_by_team[team]:
                 info = self.champ_info[cid]
                 ch = gamedata.champion(info["c"])
                 row = pygame.Rect(x0, y, col_w, 84)
@@ -3170,7 +3177,11 @@ class GameScene(Scene):
                             tip = (items[iid]["name"], ir)
                     pygame.draw.rect(surf, ui.BORDER, ir, 1, border_radius=4)
                 # 골드
-                ui.text(surf, f"{gold:,} G", (row.right - 12, row.centery), 14, ui.GOLD, anchor="midright", bold=True)
+                ui.text(surf, f"{gold:,} G", (row.right - 12, row.centery - (9 if bounty else 0)), 14, ui.GOLD,
+                        anchor="midright", bold=True)
+                if bounty:                                  # 현상금 (이 챔피언을 처치하면 더 받는 제압 골드)
+                    ui.text(surf, f"현상금 {bounty}", (row.right - 12, row.centery + 12), 12, (240, 150, 70),
+                            anchor="midright", bold=True)
                 y += 90
         if tip:
             name, ir = tip

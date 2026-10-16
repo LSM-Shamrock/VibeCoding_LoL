@@ -25,9 +25,16 @@ PASSIVE_GOLD_PER_SEC = 3.0
 PASSIVE_XP_PER_SEC = 2.5
 KILL_GOLD = 300
 FIRST_BLOOD_BONUS = 100
-ASSIST_GOLD_TOTAL = 150
+ASSIST_GOLD_RATIO = 0.5   # 어시스트한 챔피언들이 나눠 갖는 골드 = 처치 기본 골드 × 이 비율
+# 롤처럼 처치·어시스트 없이 연달아 죽은 챔피언은 처치 골드가 줄어든다 (죽은 횟수 0, 1, 2, ... 6 이상)
+DEATH_STREAK_GOLD = (KILL_GOLD, 274, 220, 176, 140, 112, 100)
+# 현상금(제압 골드): 죽지 않고 쌓은 처치(1점)·어시스트(0.5점)가 1점을 넘으면 1점마다 붙는 골드, 최대치까지
+BOUNTY_PER_POINT = 100
+BOUNTY_MAX = 700
+BOUNTY_ASSIST_POINT = 0.5
 ASSIST_WINDOW = 10.0      # 이 시간 안에 피해를 준 아군이 어시스트
 XP_SHARE_RANGE = 16.0
+MINION_GOLD_RANGE = 14.0  # 막타를 친 챔피언이 없으면(미니언·포탑이 처치) 이 거리 안의 적 챔피언들이 골드를 나눠 갖는다
 
 FIRST_WAVE_TIME = 45.0       # 첫 미니언 웨이브 (환영 인사 → '30초 남았습니다' 안내 → 생성 순서가 되도록)
 WAVE_INTERVAL = 30.0
@@ -35,7 +42,6 @@ INHIBITOR_RESPAWN = 300.0
 
 FOUNTAIN_RADIUS = 7.5     # 상점 이용 가능 범위
 FOUNTAIN_HEAL_PCT = 0.085 # 우물 안 초당 체력/마나 회복 (최대치 비율, 협곡 우물처럼)
-RECALL_TIME = 8.0         # 귀환 정신집중 시간 (초)
 FOUNTAIN_LASER_RADIUS = 9.0
 FOUNTAIN_LASER_DPS = 1200.0
 
@@ -98,6 +104,11 @@ IGNITE_HEAL_CUT = 0.40        # 점화에 걸린 적의 받는 회복량 감소
 def xp_to_next(level):
     """level -> level+1 에 필요한 경험치."""
     return 180 + 100 * level
+
+
+def kill_bounty(points):
+    """죽지 않고 쌓은 처치·어시스트 점수 -> 현상금(제압 골드)."""
+    return int(min(BOUNTY_MAX, max(0.0, (points - 1.0) * BOUNTY_PER_POINT)))
 
 
 def death_timer(level):

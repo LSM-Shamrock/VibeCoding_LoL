@@ -1,7 +1,7 @@
 ﻿"""칼바람 모드 게임 시뮬레이션 (서버 권한).
 
 - 단일 라인, 양 팀 외곽/내부 포탑 → 억제기 → 쌍둥이 포탑 → 넥서스
-- 레벨 3, 1400 골드로 시작 / B 귀환(8초) / 상점은 사망 중이거나 우물에서만
+- 레벨 3, 1400 골드로 시작 / 귀환 없음 / 상점은 사망 중이거나 우물에서만
 - 우물에서 체력·마나 회복, 라인에는 체력 회복 유물(구슬)도 생성
 - 시야: 팀마다 챔피언·미니언·구조물 주변만 보이고, 부쉬 안은 같은 부쉬 안에서만 보인다
 - 포탑 방패: 포탑 체력이 한 칸(1/5) 깎일 때마다 근처 적 챔피언에게 골드
@@ -16,15 +16,15 @@ import random
 from ..shared import data as gamedata
 from ..shared import mapdata
 from ..shared.constants import (
-    ASSIST_GOLD_TOTAL, ASSIST_WINDOW, BARRIER_BASE, BARRIER_PER_LEVEL, BARRIER_TIME, BLUE, CLEANSE_IMMUNE,
+    ASSIST_GOLD_RATIO, ASSIST_WINDOW, BARRIER_BASE, BOUNTY_ASSIST_POINT, DEATH_STREAK_GOLD, BARRIER_PER_LEVEL, BARRIER_TIME, BLUE, CLEANSE_IMMUNE,
     EXHAUST_DMG_REDUCE, EXHAUST_RANGE, EXHAUST_SLOW, EXHAUST_TIME, FIRST_BLOOD_BONUS, FIRST_WAVE_TIME,
     FLASH_COOLDOWN, FLASH_RANGE, GHOST_SPEED_PCT, GHOST_TIME, HEAL_ALLY_RATIO, HEAL_BASE, HEAL_PER_LEVEL, HEAL_RANGE,
     HEAL_SPEED_PCT, HEAL_SPEED_TIME, IGNITE_BASE, IGNITE_HEAL_CUT, IGNITE_PER_LEVEL, IGNITE_RANGE, IGNITE_TICK,
     IGNITE_TIME, FOUNTAIN_HEAL_PCT, FOUNTAIN_LASER_DPS, FOUNTAIN_LASER_RADIUS, FOUNTAIN_RADIUS, INHIBITOR_RESPAWN,
-    INVENTORY_SLOTS, KILL_GOLD, MARK_COOLDOWN, MARK_DASH_SPEED, MARK_RANGE, MARK_RECAST_TIME,
-    MARK_SPEED, MAX_LEVEL, PASSIVE_GOLD_PER_SEC, PASSIVE_XP_PER_SEC, PLATE_SHARE_RANGE, RECALL_TIME, RED,
+    INVENTORY_SLOTS, MARK_COOLDOWN, MINION_GOLD_RANGE, MARK_DASH_SPEED, MARK_RANGE, MARK_RECAST_TIME,
+    MARK_SPEED, MAX_LEVEL, PASSIVE_GOLD_PER_SEC, PASSIVE_XP_PER_SEC, PLATE_SHARE_RANGE, RED,
     RELIC_FIRST_SPAWN, RELIC_HEAL_PCT, RELIC_RADIUS, RELIC_RESPAWN, SELL_RATIO, SIGHT, WAVE_INTERVAL, XP_SHARE_RANGE,
-    death_timer, xp_to_next,
+    death_timer, kill_bounty, xp_to_next,
 )
 from ..shared.spells import SPELLS
 from . import abilities
@@ -333,7 +333,6 @@ class Simulation:
 
         self.apply_hp_loss(target, dmg)
         if isinstance(target, Champion) and dmg > 0:
-            target.recall_at = None         # 피해를 받으면 귀환 취소
             target.last_hit_at = self.time
         if isinstance(target, Structure):
             while target.plates_left > 0 and target.hp <= target.max_hp * (target.plates_left - 1) / target.plates:
@@ -349,7 +348,9 @@ class Simulation:
             if isinstance(target, Champion):
                 target.damage_log[src.id] = self.time
                 self.help_calls.append((self.time + 2.0, src.id, target.team, target.x, target.z))
-            if basic and src.stats.get("life_steal", 0) > 0 and not src.dead:
+            # 생명력 흡수: 챔피언·미니언을 때릴 때만 (포탑·억제기·넥서스·고치·말뚝은 제외)
+            if (basic and src.stats.get("life_steal", 0) > 0 and not src.dead
+                    and isinstance(target, (Champion, Minion))):
                 self.heal(src, taken * src.stats["life_steal"])
             # 흡혈 스킬: 챔피언에게는 전부, 미니언에게는 절반만 회복
             if (src.vamp and self.time < src.vamp["until"] and not src.dead
@@ -454,12 +455,17 @@ class Simulation:
             target.alive = False
             self.minions.pop(target.id, None)
             self.gone_minions.append(target.id)
-            if isinstance(killer, Champion) and target.mtype != "spiderling":
-                killer.gold += target.gold
-                killer.cs += 1
-                self.event(e="gold", d=killer.id, v=target.gold, x=round(target.x, 2), z=round(target.z, 2))
             near = [c for c in self.champions.values()
                     if c.team != target.team and not c.dead and c.dist_to(target) <= XP_SHARE_RANGE]
+            if target.mtype != "spiderling":
+                if isinstance(killer, Champion) and killer.team != target.team:
+                    killer.cs += 1
+                    self.give_gold(killer, target.gold, target.x, target.z)
+                else:
+                    # 미니언·포탑이 처치하면 근처에 있던 적 챔피언들이 골드를 나눠 받는다
+                    share = [c for c in near if c.dist_to(target) <= MINION_GOLD_RANGE]
+                    for c in share:
+                        self.give_gold(c, target.gold / len(share), target.x, target.z)
             for c in near:
                 self.give_xp(c, target.xp / len(near))
         elif isinstance(target, Structure):
@@ -469,7 +475,6 @@ class Simulation:
 
     def champion_died(self, victim, killer):
         victim.dead = True
-        victim.recall_at = None
         victim.deaths += 1
         victim.respawn_at = self.time + death_timer(victim.level)
         victim.clear_orders()
@@ -488,6 +493,7 @@ class Simulation:
         victim.caged_until = victim.revealed_until = 0.0
         victim.pierce_until = victim.q_hit_until = 0.0
         victim.exhaust_until = 0.0
+        victim.lock_until = 0.0
         victim.ignite = None
         if victim.rope:
             abilities.end_rope(self, victim, land=False)
@@ -497,8 +503,13 @@ class Simulation:
         killer_champ = killer if isinstance(killer, Champion) else None
         credited = killer_champ is not None                      # 챔피언 손에 죽었는가 (아니면 포탑·미니언에게 처형)
         shutdown = victim.kill_streak >= 3                       # 연속 처치 중이던 상대를 끊었는가
+        # 처치 골드: 연달아 죽던 챔피언이면 줄고, 처치·어시스트를 쌓은 챔피언이면 현상금(제압 골드)이 붙는다
+        base_gold = DEATH_STREAK_GOLD[min(victim.death_streak, len(DEATH_STREAK_GOLD) - 1)]
+        bounty = kill_bounty(victim.bounty_pts)
         victim.kill_streak = 0
         victim.multi_n = 0
+        victim.bounty_pts = 0.0
+        victim.death_streak += 1
         if killer_champ is None and recent:
             # 포탑·미니언에게 처치되면 마지막으로 피해를 준 챔피언이 처치 관여
             killer_champ = self.champions.get(max(recent, key=recent.get))
@@ -518,19 +529,23 @@ class Simulation:
             killer_champ.multi_n = killer_champ.multi_n + 1 if self.time - killer_champ.multi_t <= MULTIKILL_WINDOW else 1
             killer_champ.multi_t = self.time
             multi = killer_champ.multi_n
-            gold = KILL_GOLD
+            killer_champ.bounty_pts += 1.0
+            killer_champ.death_streak = 0
+            gold = base_gold + bounty
             if not self.first_blood:
                 self.first_blood = True
                 fb = True
                 gold += FIRST_BLOOD_BONUS
                 self.event(e="announce", text=f"{killer_champ.name} 님이 선취점을 올렸습니다!")
-            killer_champ.gold += gold
+            self.give_gold(killer_champ, gold, victim.x, victim.z)
             self.score[killer_champ.team] += 1
         else:
             self.score[other(victim.team)] += 1
         for a in assists:
             a.assists += 1
-            a.gold += ASSIST_GOLD_TOTAL / len(assists)
+            a.bounty_pts += BOUNTY_ASSIST_POINT
+            a.death_streak = 0
+            self.give_gold(a, base_gold * ASSIST_GOLD_RATIO / len(assists), victim.x, victim.z)
 
         xp_total = 100 + 35 * victim.level
         gainers = ([killer_champ] if killer_champ else []) + assists
@@ -540,7 +555,8 @@ class Simulation:
         self.event(e="kill", k=killer_champ.id if killer_champ else (killer.id if killer else 0),
                    kn=killer_champ.name if killer_champ else ("포탑" if isinstance(killer, Structure) else "미니언"),
                    kt=other(victim.team), v=victim.id, vn=victim.name, vt=victim.team,
-                   mk=multi, ks=streak, sd=shutdown, fb=fb, ke=credited)         # 아나운서가 고르는 데 쓰는 값
+                   mk=multi, ks=streak, sd=shutdown, fb=fb, ke=credited,          # 아나운서가 고르는 데 쓰는 값
+                   bt=bounty if killer_champ is not None else 0)                   # 제압 골드
 
     def structure_destroyed(self, s, killer):
         s.alive = False
@@ -563,6 +579,13 @@ class Simulation:
         if s.skind == "nexus":
             self.winner = enemy
             self.event(e="victory", team=enemy)
+
+    def give_gold(self, c, amount, x, z):
+        """골드를 주고 받는 사람에게 +골드 글자를 띄운다."""
+        if amount <= 0:
+            return
+        c.gold += amount
+        self.event(e="gold", d=c.id, v=int(round(amount)), x=round(x, 2), z=round(z, 2))
 
     def give_xp(self, c, amount):
         if c.level >= MAX_LEVEL:
@@ -607,21 +630,16 @@ class Simulation:
                 self.sell(c, int(msg["slot"]))
             elif c.dead:
                 return
-            elif cmd == "recall":
-                self.recall(c)
             elif cmd == "move":
-                c.recall_at = None
                 self.cmd_move(c, float(msg["x"]), float(msg["z"]))
             elif cmd == "amove":
-                c.recall_at = None
                 self.cmd_move(c, float(msg["x"]), float(msg["z"]))
                 c.attack_move = True
             elif cmd == "attack":
-                c.recall_at = None
                 self.cmd_attack(c, int(msg["id"]))
             elif cmd == "stop":
-                c.recall_at = None
-                c.clear_orders()
+                if not self.locked(c):
+                    c.clear_orders()
             elif cmd == "cast":
                 self.cast(c, msg["slot"], float(msg["x"]), float(msg["z"]))
             elif cmd == "spell":
@@ -629,8 +647,12 @@ class Simulation:
         except (KeyError, TypeError, ValueError):
             pass
 
+    def locked(self, c):
+        """몸을 쓰는 스킬 동작 중이라 이동·공격·스킬·주문을 할 수 없는가 (이무기 E 등)."""
+        return self.time < c.lock_until
+
     def cmd_move(self, c, x, z):
-        if c.dash:
+        if c.dash or self.locked(c):
             return
         c.windup = None
         c.attack_target = None
@@ -638,7 +660,7 @@ class Simulation:
         c.move_target = mapdata.clamp_to_map(x, z, c.radius)
 
     def cmd_attack(self, c, uid):
-        if c.dash or c.rope:
+        if c.dash or c.rope or self.locked(c):
             return
         target = self.unit(uid)
         if not self.targetable(target, c.team) or not self.can_see(c.team, target):
@@ -648,13 +670,6 @@ class Simulation:
         c.attack_target = uid
         c.move_target = None
         c.attack_move = False
-
-    def recall(self, c):
-        """귀환 시작: RECALL_TIME 동안 가만히 있으면 우물로 이동 (이동·공격·스킬·피해·기절 시 취소)."""
-        if c.dead or c.dash or c.rope or c.recall_at is not None or c.stunned(self.time):
-            return
-        c.clear_orders()
-        c.recall_at = self.time + RECALL_TIME
 
     def level_ability(self, c, slot):
         if slot not in SLOTS or c.skill_points <= 0:
@@ -697,7 +712,7 @@ class Simulation:
 
     def cast(self, c, slot, x, z):
         t = self.time
-        if slot not in SLOTS or c.dead or c.stunned(t) or c.dash or c.silenced(t):
+        if slot not in SLOTS or c.dead or c.stunned(t) or c.dash or c.silenced(t) or self.locked(c):
             return False
         if c.rope and slot not in ("W", "R"):
             return False                # 줄 위에서는 W(칼 내리꽂기)와 R(내려오기)만
@@ -721,7 +736,6 @@ class Simulation:
             return False
 
         c.mana -= cost
-        c.recall_at = None
         c.ready_at[slot] = t + (cx.cooldown if cx.cooldown is not None else c.cooldown_of(slot))
         c.windup = None
         c.cast_anim_until = t + 0.3
@@ -731,7 +745,7 @@ class Simulation:
 
     def cast_spell(self, c, slot, x, z):
         """D / F 칸에 들어 있는 소환사 주문을 쓴다. (x, z) 는 마우스가 가리키는 바닥 지점."""
-        if slot not in ("D", "F"):
+        if slot not in ("D", "F") or self.locked(c):
             return
         spell = c.spells[0 if slot == "D" else 1]
         if spell == "flash":
@@ -742,7 +756,6 @@ class Simulation:
             fn = getattr(self, "spell_" + spell, None)
             if fn is not None and self.time >= c.ready_at[slot] and fn(c, x, z):
                 c.ready_at[slot] = self.time + SPELLS[spell]["cooldown"]
-                c.recall_at = None
                 self.event(e="fx", fx="spell", style=spell, x=round(c.x, 2), z=round(c.z, 2), tm=c.team)
 
     def pick_enemy_champion(self, c, x, z, rng):
@@ -828,7 +841,7 @@ class Simulation:
             c.ignite = None
 
     def flash(self, c, x, z, slot="D"):
-        if self.time < c.ready_at[slot] or c.stunned(self.time) or c.rope:
+        if self.time < c.ready_at[slot] or c.stunned(self.time) or c.rope or self.locked(c):
             return
         dx, dz = x - c.x, z - c.z
         d = math.hypot(dx, dz)
@@ -839,19 +852,19 @@ class Simulation:
         c.x, c.z = self.resolve_position(c.x + dx / d * dist, c.z + dz / d * dist, c.radius)
         c.dash = None
         c.windup = None
-        c.recall_at = None
         c.ready_at[slot] = self.time + FLASH_COOLDOWN
         self.face(c, x, z)
         self.event(e="fx", fx="flash", x=round(ox, 2), z=round(oz, 2), x2=round(c.x, 2), z2=round(c.z, 2), tm=c.team)
 
     def mark(self, c, x, z, slot="F"):
+        if self.locked(c):
+            return
         # 표식 재사용: 맞힌 대상에게 돌진
         if c.mark and self.time <= c.mark[1]:
             target = self.unit(c.mark[0])
             c.mark = None
             if self.targetable(target, c.team) and not c.rooted(self.time):
                 c.clear_orders()
-                c.recall_at = None
                 c.dash = {"x": target.x, "z": target.z, "speed": MARK_DASH_SPEED, "follow": target.id, "empower": None}
             return
         if self.time < c.ready_at[slot] or c.stunned(self.time) or c.rope:
@@ -870,7 +883,6 @@ class Simulation:
             c.mark = (target.id, sim.time + MARK_RECAST_TIME)
         p.on_hit = on_hit
         self.projectiles[p.id] = p
-        c.recall_at = None
         c.ready_at[slot] = self.time + MARK_COOLDOWN
         self.face(c, x, z)
 
@@ -1056,17 +1068,6 @@ class Simulation:
             self.heal(c, c.max_hp * FOUNTAIN_HEAL_PCT * dt)
             c.mana = min(c.max_mana, c.mana + c.max_mana * FOUNTAIN_HEAL_PCT * dt)
 
-        # 귀환
-        if c.recall_at is not None:
-            if c.stunned(t):
-                c.recall_at = None
-            elif t >= c.recall_at:
-                c.recall_at = None
-                ox, oz = c.x, c.z
-                c.x, c.z = mapdata.spawn_points(c.team, 5)[c.id % 5]
-                c.clear_orders()
-                self.event(e="fx", fx="recall", x=round(ox, 2), z=round(oz, 2), x2=round(c.x, 2), z2=round(c.z, 2), tm=c.team)
-
         # 적 우물 레이저
         efx, efz = mapdata.fountain_pos(other(c.team))
         if math.hypot(c.x - efx, c.z - efz) < FOUNTAIN_LASER_RADIUS:
@@ -1084,6 +1085,9 @@ class Simulation:
             return
         if c.stunned(t):
             c.windup = None
+            return
+        if self.locked(c):
+            c.anim = 3
             return
         if t < c.cast_anim_until:
             c.anim = 3
@@ -1623,7 +1627,6 @@ class Simulation:
             "ab": c.ranks, "sp": c.skill_points,
             "cd": {k: round(max(0.0, v - t), 1) for k, v in c.ready_at.items()},
             "mk": bool(c.mark), "spl": c.spells, "dead": c.dead, "rt": round(max(0.0, c.respawn_at - t), 1) if c.dead else 0,
-            "rc": round(max(0.0, c.recall_at - t), 1) if c.recall_at is not None else 0,
             "st": st, "a": c.anim, "k": c.kills, "d": c.deaths, "as": c.assists, "cs": c.cs,
             "shop": self.can_shop(c),
             "s": {"ad": round(c.stats["ad"]), "ap": round(c.stats["ap"]), "ar": round(c.stats["armor"]),
@@ -1644,7 +1647,8 @@ class Simulation:
         champs = {c.id: self.champion_row(c, t) for c in self.champions.values()}
         # 점수판(Tab)은 시야와 상관없이 모두에게
         board = [[c.id, c.level, c.kills, c.deaths, c.assists, c.cs, int(c.gold), c.items, c.dead,
-                  round(max(0.0, c.respawn_at - t)) if c.dead else 0] for c in self.champions.values()]
+                  round(max(0.0, c.respawn_at - t)) if c.dead else 0, kill_bounty(c.bounty_pts)]
+                 for c in self.champions.values()]
         structs = [[s.id, round(s.hp), int(s.alive), int(self.vulnerable(s)), s.target or 0]
                    for s in self.structures.values()]
         out = {}
