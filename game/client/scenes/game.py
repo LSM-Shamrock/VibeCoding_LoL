@@ -7,7 +7,7 @@
 - Ctrl + Q/W/E/R: 스킬 레벨 업 (HUD 의 + 버튼 클릭도 가능)
 - D: 점멸, F: 표식(눈덩이) — 맞힌 뒤 F 를 다시 누르면 대상에게 돌진
 - A + 좌클릭: 공격 이동, S: 정지
-- P: 상점 (사망 중이거나 우물 안에서만 구매, 되돌리기는 상점을 벗어나기 전까지), Tab: 점수판
+- B: 귀환 (8초 정신집중, 이동/공격/스킬/피해 시 취소), P: 상점 (사망 중이거나 우물 안에서만 구매, 되돌리기는 상점을 벗어나기 전까지), Tab: 점수판
 - 시야: 아군 주변만 보이고(전장의 안개), 부쉬 안의 적은 같은 부쉬에 들어가야 보인다
 - Y: 카메라 고정/자유 전환 (처음엔 자유 카메라), F6~F9: 테스트 치트 (체력/마나/쿨타임/레벨), Space: 내 챔피언으로 카메라 이동, 마우스 휠: 줌
 - Enter: 채팅 (Enter 로 보내기, Esc 로 취소). 킬·포탑 파괴 같은 알림도 채팅창에 올라온다
@@ -23,7 +23,7 @@ from ...shared import data as gamedata
 from ...shared import mapdata
 from ...shared.spells import DEFAULT_SPELLS, SPELLS
 from ...shared.constants import (
-    BLUE, FLASH_COOLDOWN, FLASH_RANGE, INVENTORY_SLOTS, MARK_COOLDOWN, MARK_RANGE, MARK_RECAST_TIME, RED,
+    BLUE, FLASH_COOLDOWN, FLASH_RANGE, INVENTORY_SLOTS, MARK_COOLDOWN, MARK_RANGE, MARK_RECAST_TIME, RECALL_TIME, RED,
     SELL_RATIO, SIGHT,
 )
 from .. import ui
@@ -841,6 +841,9 @@ class GameScene(Scene):
                 self.add_fx("ring_up", x, z, 0.8, radius=0.9, color=(1.0, 0.6, 0.3))
         elif kind == "relic":
             self.add_fx("ring_up", x, z, 0.8, radius=1.6, color=(0.4, 1.0, 0.5))
+        elif kind == "recall":
+            self.add_fx("ring_up", x, z, 0.7, radius=1.4, color=(0.4, 0.7, 1.0))
+            self.add_fx("ring_up", ev["x2"], ev["z2"], 0.9, radius=1.6, color=(0.4, 0.7, 1.0))
         elif kind == "plate":
             self.add_fx("burst", x, z, 0.6, radius=2.2, color=(1.0, 0.82, 0.35))
         elif kind == "slam":
@@ -1202,6 +1205,8 @@ class GameScene(Scene):
                 self.sfx_unit(cid, "death")
             elif old["dead"] and not d["dead"]:
                 self.sfx_unit(cid, "respawn")
+            if d.get("rc", 0) > 0 and not old.get("rc", 0):
+                self.sfx_unit(cid, "recall_start")
         if cid == self.my_id:
             ranks = d["ab"]
             if self.my_ranks is not None and any(ranks.get(k, 0) > self.my_ranks.get(k, 0) for k in ranks):
@@ -1244,7 +1249,7 @@ class GameScene(Scene):
                 self.sfx(name)                              # 포탑에 타게팅되면 본인에게만 경고음
         elif kind == "relic" and ev.get("d") == self.my_id:
             self.sfx(name)
-        elif kind in ("flash", "teleport") and "x2" in ev:
+        elif kind in ("recall", "flash", "teleport") and "x2" in ev:
             self.sfx(name, ev["x2"], ev["z2"])          # 도착한 곳에서 소리
         else:
             self.sfx(name, ev["x"], ev["z"])
@@ -1463,6 +1468,9 @@ class GameScene(Scene):
                 self.send_cmd(c="spell", slot=act, x=round(x, 2), z=round(z, 2))
             elif act == "stop":
                 self.send_cmd(c="stop")
+                self.move_dest = None
+            elif act == "recall":
+                self.send_cmd(c="recall")
                 self.move_dest = None
             elif act == "attack_move":
                 self.amove_pending = True
@@ -2130,6 +2138,15 @@ class GameScene(Scene):
             if "emp" in st:
                 r.draw_transparent(m.orb, model_matrix(e.x, mid, e.z, scale=0.9 * CHAMP_SCALE), (0.5, 0.85, 1.0, 0.18),
                                    additive=True)
+            if d.get("rc", 0) > 0:
+                # 귀환 중: 발밑 원 + 위로 올라가는 고리
+                k = 1 - d["rc"] / RECALL_TIME
+                r.draw_transparent(m.disc, model_matrix(e.x, 0.06, e.z, scale=1.1), (0.35, 0.6, 1.0, 0.25 + 0.2 * k),
+                                   additive=True)
+                for j in range(2):
+                    ph = (t * 0.8 + j * 0.5) % 1.0
+                    r.draw_transparent(m.ring, model_matrix(e.x, 0.1 + ph * 2.2, e.z, scale=0.9),
+                                       (0.45, 0.7, 1.0, 0.8 * (1 - ph)), additive=True)
 
         # 핑: 바닥에서 퍼지는 고리 + 빛기둥
         now_p = time.time()
@@ -2632,6 +2649,11 @@ class GameScene(Scene):
             surf.blit(shade, (0, 230))
             ui.text(surf, f"부활까지 {math.ceil(me['rt'])}초", (WIDTH // 2, 270), 34, (230, 230, 240), anchor="center",
                     bold=True)
+        if me and not me["dead"] and me.get("rc", 0) > 0:
+            k = 1 - me["rc"] / RECALL_TIME
+            r = pygame.Rect(WIDTH // 2 - 130, 560, 260, 14)
+            ui.bar(surf, r, k, (90, 150, 255))
+            ui.text(surf, f"귀환 {me['rc']:.1f}", (r.centerx, r.y - 3), 14, anchor="midbottom", bold=True)
         if self.shop_open:
             self.draw_shop(surf)
             if self.shop_tip:

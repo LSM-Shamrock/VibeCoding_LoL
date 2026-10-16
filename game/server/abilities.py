@@ -71,6 +71,7 @@ def interrupt(u):
     if isinstance(u, Champion):
         u.dash = None
         u.clear_orders()
+        u.recall_at = None
     elif hasattr(u, "windup"):
         u.windup = None
 

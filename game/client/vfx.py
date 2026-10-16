@@ -24,7 +24,7 @@ TEAM_FX_MIX = 0.72                  # 팀 색 비율 (나머지는 스킬 고유
 SUPPORT_ALPHA = 0.55                # 피해 없이 효과만 주는 스킬 이펙트의 투명도 (피해 스킬은 1.0)
 SUPPORT_LIGHTEN = 0.35              # ... 그리고 그만큼 흰색 쪽으로 연하게
 # 피해를 주지 않고 효과(회복·보호막·강화·이동·약화)만 주는 이펙트
-SUPPORT_FX = {"heal", "cleanse", "shield", "wind", "buff", "anchor_set", "rope_up", "trap_set", "relic",
+SUPPORT_FX = {"heal", "cleanse", "shield", "wind", "buff", "anchor_set", "rope_up", "trap_set", "relic", "recall",
               "flash", "teleport", "holy"}
 SUPPORT_SPELLS = {"heal", "ghost", "barrier", "cleanse", "exhaust"}      # 소환사 주문 중 피해 없는 것
 SUPPORT_ZONES = {"sanctuary", "garden"}
@@ -1065,6 +1065,13 @@ class Vfx:
             self.emit("spark", x, 1.0, z, size=2.2 * big, dur=0.3, col=GOLD)
             self.emit("ring", x, 0.12, z, size=0.6, size_to=2.0 * big, dur=0.4, col=GOLD, mode="flat")
             self.burst("spark", x, 1.0, z, 5, 2.5, 0.3, 0.4, PALE, up=1.0)
+
+    def fx_recall(self, kind, ev):
+        for key in (("x", "z"), ("x2", "z2")):
+            x, z = ev[key[0]], ev[key[1]]
+            self.pillar(x, z, GHOST, 9.0, 1.2, 0.7)
+            self.emit("ring", x, 0.12, z, size=0.8, size_to=2.6, dur=0.7, col=GHOST, mode="flat")
+            self.burst("spark", x, 0.5, z, 6, 1.4, 0.35, 0.8, PALE, up=3.0)
 
     def fx_spell(self, kind, ev):
         """소환사 주문 (회복 / 유체화 / 방어막 / 정화 / 탈진 / 점화)."""

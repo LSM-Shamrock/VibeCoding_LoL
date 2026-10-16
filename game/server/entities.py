@@ -171,7 +171,8 @@ class Champion(Unit):
         self.mark = None             # (표식 대상 id, 만료 시각)
         self.exhaust_until = 0.0     # 탈진: 이 시각까지 주는 피해가 줄고 느려짐
         self.ignite = None           # 점화: {"until","next","tick","src"} 지속 고정 피해, 받는 회복 감소
-        self.last_hit_at = -99.0     # 마지막으로 피해를 받은 시각 (봇의 후퇴 판단용)
+        self.recall_at = None        # 귀환 완료 시각 (정신집중 중일 때만)
+        self.last_hit_at = -99.0     # 마지막으로 피해를 받은 시각 (봇의 귀환·후퇴 판단용)
         self.lock_until = 0.0        # 이 시각까지 이동·공격·스킬·주문 불가 (이무기 E 처럼 몸을 쓰는 동작 중)
         self.death_streak = 0        # 처치·어시스트 없이 이어진 죽음 (처치 골드가 줄어든다)
         self.bounty_pts = 0.0        # 죽지 않고 쌓은 처치(1)·어시스트(0.5) 점수 (현상금)

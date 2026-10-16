@@ -42,6 +42,7 @@ INHIBITOR_RESPAWN = 300.0
 
 FOUNTAIN_RADIUS = 7.5     # 상점 이용 가능 범위
 FOUNTAIN_HEAL_PCT = 0.085 # 우물 안 초당 체력/마나 회복 (최대치 비율, 협곡 우물처럼)
+RECALL_TIME = 8.0         # 귀환 정신집중 시간 (초)
 FOUNTAIN_LASER_RADIUS = 9.0
 FOUNTAIN_LASER_DPS = 1200.0
 

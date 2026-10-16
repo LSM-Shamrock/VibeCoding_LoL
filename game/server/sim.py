@@ -1,7 +1,7 @@
 ﻿"""칼바람 모드 게임 시뮬레이션 (서버 권한).
 
 - 단일 라인, 양 팀 외곽/내부 포탑 → 억제기 → 쌍둥이 포탑 → 넥서스
-- 레벨 3, 1400 골드로 시작 / 귀환 없음 / 상점은 사망 중이거나 우물에서만
+- 레벨 3, 1400 골드로 시작 / B 귀환(8초) / 상점은 사망 중이거나 우물에서만
 - 우물에서 체력·마나 회복, 라인에는 체력 회복 유물(구슬)도 생성
 - 시야: 팀마다 챔피언·미니언·구조물 주변만 보이고, 부쉬 안은 같은 부쉬 안에서만 보인다
 - 포탑 방패: 포탑 체력이 한 칸(1/5) 깎일 때마다 근처 적 챔피언에게 골드
@@ -22,7 +22,7 @@ from ..shared.constants import (
     HEAL_SPEED_PCT, HEAL_SPEED_TIME, IGNITE_BASE, IGNITE_HEAL_CUT, IGNITE_PER_LEVEL, IGNITE_RANGE, IGNITE_TICK,
     IGNITE_TIME, FOUNTAIN_HEAL_PCT, FOUNTAIN_LASER_DPS, FOUNTAIN_LASER_RADIUS, FOUNTAIN_RADIUS, INHIBITOR_RESPAWN,
     INVENTORY_SLOTS, MARK_COOLDOWN, MINION_GOLD_RANGE, MARK_DASH_SPEED, MARK_RANGE, MARK_RECAST_TIME,
-    MARK_SPEED, MAX_LEVEL, PASSIVE_GOLD_PER_SEC, PASSIVE_XP_PER_SEC, PLATE_SHARE_RANGE, RED,
+    MARK_SPEED, MAX_LEVEL, PASSIVE_GOLD_PER_SEC, PASSIVE_XP_PER_SEC, PLATE_SHARE_RANGE, RECALL_TIME, RED,
     RELIC_FIRST_SPAWN, RELIC_HEAL_PCT, RELIC_RADIUS, RELIC_RESPAWN, SELL_RATIO, SIGHT, WAVE_INTERVAL, XP_SHARE_RANGE,
     death_timer, kill_bounty, xp_to_next,
 )
@@ -333,6 +333,7 @@ class Simulation:
 
         self.apply_hp_loss(target, dmg)
         if isinstance(target, Champion) and dmg > 0:
+            target.recall_at = None         # 피해를 받으면 귀환 취소
             target.last_hit_at = self.time
         if isinstance(target, Structure):
             while target.plates_left > 0 and target.hp <= target.max_hp * (target.plates_left - 1) / target.plates:
@@ -475,6 +476,7 @@ class Simulation:
 
     def champion_died(self, victim, killer):
         victim.dead = True
+        victim.recall_at = None
         victim.deaths += 1
         victim.respawn_at = self.time + death_timer(victim.level)
         victim.clear_orders()
@@ -636,14 +638,20 @@ class Simulation:
                 self.ping(c, float(msg["x"]), float(msg["z"]), str(msg.get("k", "alert")))
             elif c.dead:
                 return
+            elif cmd == "recall":
+                self.recall(c)
             elif cmd == "move":
+                c.recall_at = None
                 self.cmd_move(c, float(msg["x"]), float(msg["z"]))
             elif cmd == "amove":
+                c.recall_at = None
                 self.cmd_move(c, float(msg["x"]), float(msg["z"]))
                 c.attack_move = True
             elif cmd == "attack":
+                c.recall_at = None
                 self.cmd_attack(c, int(msg["id"]))
             elif cmd == "stop":
+                c.recall_at = None
                 if not self.locked(c):
                     c.clear_orders()
             elif cmd == "cast":
@@ -676,6 +684,13 @@ class Simulation:
         c.attack_target = uid
         c.move_target = None
         c.attack_move = False
+
+    def recall(self, c):
+        """귀환 시작: RECALL_TIME 동안 가만히 있으면 우물로 이동 (이동·공격·스킬·피해·기절 시 취소)."""
+        if c.dead or c.dash or c.rope or c.recall_at is not None or c.stunned(self.time) or self.locked(c):
+            return
+        c.clear_orders()
+        c.recall_at = self.time + RECALL_TIME
 
     def level_ability(self, c, slot):
         if slot not in SLOTS or c.skill_points <= 0:
@@ -786,6 +801,7 @@ class Simulation:
             return False
 
         c.mana -= cost
+        c.recall_at = None
         c.ready_at[slot] = t + (cx.cooldown if cx.cooldown is not None else c.cooldown_of(slot))
         c.windup = None
         c.cast_anim_until = t + 0.3
@@ -806,6 +822,7 @@ class Simulation:
             fn = getattr(self, "spell_" + spell, None)
             if fn is not None and self.time >= c.ready_at[slot] and fn(c, x, z):
                 c.ready_at[slot] = self.time + SPELLS[spell]["cooldown"]
+                c.recall_at = None
                 self.event(e="fx", fx="spell", style=spell, x=round(c.x, 2), z=round(c.z, 2), tm=c.team)
 
     def pick_enemy_champion(self, c, x, z, rng):
@@ -902,6 +919,7 @@ class Simulation:
         c.x, c.z = self.resolve_position(c.x + dx / d * dist, c.z + dz / d * dist, c.radius)
         c.dash = None
         c.windup = None
+        c.recall_at = None
         c.ready_at[slot] = self.time + FLASH_COOLDOWN
         self.face(c, x, z)
         self.event(e="fx", fx="flash", x=round(ox, 2), z=round(oz, 2), x2=round(c.x, 2), z2=round(c.z, 2), tm=c.team)
@@ -915,6 +933,7 @@ class Simulation:
             c.mark = None
             if self.targetable(target, c.team) and not c.rooted(self.time):
                 c.clear_orders()
+                c.recall_at = None
                 c.dash = {"x": target.x, "z": target.z, "speed": MARK_DASH_SPEED, "follow": target.id, "empower": None}
             return
         if self.time < c.ready_at[slot] or c.stunned(self.time) or c.rope:
@@ -933,6 +952,7 @@ class Simulation:
             c.mark = (target.id, sim.time + MARK_RECAST_TIME)
         p.on_hit = on_hit
         self.projectiles[p.id] = p
+        c.recall_at = None
         c.ready_at[slot] = self.time + MARK_COOLDOWN
         self.face(c, x, z)
 
@@ -1125,6 +1145,17 @@ class Simulation:
         if self.in_fountain(c):
             self.heal(c, c.max_hp * FOUNTAIN_HEAL_PCT * dt)
             c.mana = min(c.max_mana, c.mana + c.max_mana * FOUNTAIN_HEAL_PCT * dt)
+
+        # 귀환
+        if c.recall_at is not None:
+            if c.stunned(t):
+                c.recall_at = None
+            elif t >= c.recall_at:
+                c.recall_at = None
+                ox, oz = c.x, c.z
+                c.x, c.z = mapdata.spawn_points(c.team, 5)[c.id % 5]
+                c.clear_orders()
+                self.event(e="fx", fx="recall", x=round(ox, 2), z=round(oz, 2), x2=round(c.x, 2), z2=round(c.z, 2), tm=c.team)
 
         # 적 우물 레이저
         efx, efz = mapdata.fountain_pos(other(c.team))
@@ -1687,6 +1718,7 @@ class Simulation:
             "ab": c.ranks, "sp": c.skill_points,
             "cd": {k: round(max(0.0, v - t), 1) for k, v in c.ready_at.items()},
             "mk": bool(c.mark), "spl": c.spells, "dead": c.dead, "rt": round(max(0.0, c.respawn_at - t), 1) if c.dead else 0,
+            "rc": round(max(0.0, c.recall_at - t), 1) if c.recall_at is not None else 0,
             "st": st, "a": c.anim, "k": c.kills, "d": c.deaths, "as": c.assists, "cs": c.cs,
             "shop": self.can_shop(c), "ud": len(c.undo),
             "s": {"ad": round(c.stats["ad"]), "ap": round(c.stats["ap"]), "ar": round(c.stats["armor"]),

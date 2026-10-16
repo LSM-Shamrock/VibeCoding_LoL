@@ -15,14 +15,14 @@ PATH = os.path.join(ROOT, "keybinds.json")
 # (행동, 설정 창에 보일 이름) — 화면에 나오는 순서
 ACTIONS = [
     ("Q", "스킬 Q"), ("W", "스킬 W"), ("E", "스킬 E"), ("R", "스킬 R"),
-    ("D", "소환사 주문 1"), ("F", "소환사 주문 2"),
+    ("D", "소환사 주문 1"), ("F", "소환사 주문 2"), ("recall", "귀환"),
     ("attack_move", "공격 이동"), ("stop", "정지"),
     ("shop", "상점"), ("score", "점수판"),
     ("cam_lock", "카메라 고정 전환"), ("cam_center", "카메라 내 챔피언"), ("ping", "핑"),
 ]
 DEFAULTS = {
     "Q": (pygame.KSCAN_Q, "Q"), "W": (pygame.KSCAN_W, "W"), "E": (pygame.KSCAN_E, "E"), "R": (pygame.KSCAN_R, "R"),
-    "D": (pygame.KSCAN_D, "D"), "F": (pygame.KSCAN_F, "F"),
+    "D": (pygame.KSCAN_D, "D"), "F": (pygame.KSCAN_F, "F"), "recall": (pygame.KSCAN_B, "B"),
     "attack_move": (pygame.KSCAN_A, "A"), "stop": (pygame.KSCAN_S, "S"),
     "shop": (pygame.KSCAN_P, "P"), "score": (pygame.KSCAN_TAB, "Tab"),
     "cam_lock": (pygame.KSCAN_Y, "Y"), "cam_center": (pygame.KSCAN_SPACE, "Space"),
