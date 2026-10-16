@@ -632,6 +632,8 @@ class Simulation:
                 self.undo(c)
             elif cmd == "swap":
                 self.swap_items(c, int(msg["a"]), int(msg["b"]))
+            elif cmd == "ping":
+                self.ping(c, float(msg["x"]), float(msg["z"]), str(msg.get("k", "alert")))
             elif c.dead:
                 return
             elif cmd == "move":
@@ -713,6 +715,20 @@ class Simulation:
         c.gold += refund
         c.undo.append({"items": before, "gold": -refund})
         c.recompute_stats(self.time)
+
+    PING_KINDS = ("alert", "danger", "omw", "assist", "missing")
+
+    def ping(self, c, x, z, kind):
+        """핑: 같은 팀에게만 (x, z) 에 신호를 보낸다. 너무 자주 찍지 못하게 5초에 5번까지."""
+        if kind not in self.PING_KINDS:
+            return
+        t = self.time
+        c.ping_times = [p for p in c.ping_times if t - p < 5.0]
+        if len(c.ping_times) >= 5:
+            return
+        c.ping_times.append(t)
+        x, z = mapdata.clamp_to_map(x, z)
+        self.event(e="ping", d=c.id, k=kind, x=round(x, 2), z=round(z, 2), tm=c.team)
 
     def swap_items(self, c, a, b):
         """인벤토리 자리 바꾸기 (언제든 가능). b 가 빈 칸이면 a 의 아이템을 맨 뒤 칸으로 옮긴다."""
@@ -1606,6 +1622,8 @@ class Simulation:
         if e in ("dmg", "gold", "heal"):
             keys = ("s", "d") if e == "dmg" else ("d",)
             return any((ch := self.champions.get(ev.get(k))) is not None and ch.team == team for k in keys)
+        if e == "ping":
+            return ev.get("tm") == team                     # 핑은 같은 팀에게만
         if e in ("cast", "levelup"):
             u = self.champions.get(ev.get("d"))
             return u is not None and self.can_see(team, u)
@@ -1689,7 +1707,7 @@ class Simulation:
         champs = {c.id: self.champion_row(c, t) for c in self.champions.values()}
         # 점수판(Tab)은 시야와 상관없이 모두에게
         board = [[c.id, c.level, c.kills, c.deaths, c.assists, c.cs, int(c.gold), c.items, c.dead,
-                  round(max(0.0, c.respawn_at - t)) if c.dead else 0, kill_bounty(c.bounty_pts)]
+                  round(max(0.0, c.respawn_at - t)) if c.dead else 0, kill_bounty(c.bounty_pts), c.spells]
                  for c in self.champions.values()]
         structs = [[s.id, round(s.hp), int(s.alive), int(self.vulnerable(s)), s.target or 0]
                    for s in self.structures.values()]

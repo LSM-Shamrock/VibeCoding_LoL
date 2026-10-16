@@ -104,6 +104,23 @@
    "pitch": 0.03,
    "gap": 0.1
   },
+  "ui_ping": {
+   "files": [
+    "interface/pluck_002.ogg"
+   ],
+   "vol": 0.75,
+   "pitch": 0.03,
+   "gap": 0.12,
+   "pri": 1
+  },
+  "ui_ping_danger": {
+   "files": [
+    "interface/error_006.ogg"
+   ],
+   "vol": 0.6,
+   "gap": 0.12,
+   "pri": 1
+  },
   "cast_fail": {
    "files": [
     "interface/error_006.ogg"

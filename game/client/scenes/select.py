@@ -201,46 +201,38 @@ class SelectScene(Scene):
         ui.text(surf, title, (WIDTH // 2, 36), 30, anchor="center", bold=True)
         ui.text(surf, f"{left}", (WIDTH // 2, 80), 34, ui.GOLD if left > 10 else ui.RED_C, anchor="center", bold=True)
 
-        # 챔피언 목록
-        ui.panel(surf, (24, 24, 300, 520))
-        ui.text(surf, "챔피언", (44, 38), 18, bold=True)
+        # 가운데 위: 챔피언 목록 (초상화 칸)
         self.card_rects = []
-        me = self.me()
         champs = gamedata.champions()
-        # 챔피언이 많아져도 목록 패널(높이 520) 안에 들어가도록 카드 높이를 맞춘다
-        step = min(78, 436 // max(1, len(champs)))
-        card_h = step - 6
-        y = 74
-        for cid, ch in champs.items():
-            rect = pygame.Rect(40, y, 268, card_h)
-            sel = me and me["champ"] == cid
-            col = tuple(ch.get("color", (200, 200, 200)))
-            ui.panel(surf, rect, (40, 60, 95, 240) if sel else (24, 34, 54, 230), ui.HIGHLIGHT if sel else ui.BORDER)
-            d = min(50, card_h - 14)
-            draw_round_portrait(surf, cid, (rect.x + 10 + d // 2, rect.centery), d // 2,
-                                ui.HIGHLIGHT if sel else (150, 165, 190), color=col)
-            tx = rect.x + 20 + d
-            ui.text(surf, ch["name"], (tx, rect.y + 8), 18, bold=True)
-            ui.text(surf, ch.get("role", ""), (rect.right - 10, rect.y + 12), 12, ui.GOLD, anchor="topright")
-            ui.text(surf, ch["title"], (tx, rect.y + 8 + 22), 13, ui.TEXT_DIM)
+        tile_w, tile_h, cols = 92, 112, 6
+        n = len(champs)
+        rows = max(1, (n + cols - 1) // cols)
+        per_row = min(cols, max(1, n))
+        grid = pygame.Rect(0, 0, per_row * tile_w + 24, rows * tile_h + 16)
+        grid.midtop = (WIDTH // 2, 104)
+        ui.panel(surf, grid, (12, 18, 30, 215), ui.BORDER)
+        mouse = ui.mouse_pos()
+        taken = {m["champ"] for m in room["members"]
+                 if me and m["team"] == me["team"] and m["key"] != me["key"] and m["champ"]}
+        for i, (cid, ch) in enumerate(champs.items()):
+            r_, c_ = divmod(i, cols)
+            in_row = min(cols, n - r_ * cols)
+            x0 = WIDTH // 2 - in_row * tile_w // 2
+            rect = pygame.Rect(x0 + c_ * tile_w + 4, grid.y + 8 + r_ * tile_h, tile_w - 8, tile_h - 8)
+            sel = bool(me and me["champ"] == cid)
+            hover = rect.collidepoint(mouse)
+            pr = pygame.Rect(0, 0, 72, 72)
+            pr.midtop = (rect.centerx, rect.y + 4)
+            draw_round_portrait(surf, cid, pr.center, 36, ui.GOLD if sel else (ui.HIGHLIGHT if hover else (110, 120, 145)),
+                                cid in taken, tuple(ch.get("color", (200, 200, 200))), ring_w=3 if sel else 2)
+            ui.text(surf, ch["name"], (rect.centerx, pr.bottom + 6), 14, ui.GOLD if sel else ui.TEXT, anchor="midtop", bold=sel)
             self.card_rects.append((cid, rect))
-            y += step
 
-        # 팀 목록
-        ui.panel(surf, (WIDTH - 324, 24, 300, 520))
-        y = 40
-        for team in (BLUE, RED):
-            ui.text(surf, TEAM_NAMES[team], (WIDTH - 304, y), 18, ui.TEAM_UI[team], bold=True)
-            y += 30
-            for m in room["members"]:
-                if m["team"] != team:
-                    continue
-                champ = gamedata.champion(m["champ"]) if m["champ"] else None
-                label = champ["name"] if champ else "선택 중..."
-                ui.text(surf, m["name"] + (" (나)" if m["key"] == self.app.my_key else ""), (WIDTH - 300, y), 15)
-                ui.text(surf, label, (WIDTH - 44, y), 15, ui.GREEN_C if m["locked"] else ui.TEXT_DIM, anchor="topright")
-                y += 24
-            y += 16
+        # 왼쪽: 우리 팀, 오른쪽: 상대 팀 (고른 챔피언 · 이름 · 소환사 주문)
+        my_team = me["team"] if me else BLUE
+        for team, panel in ((my_team, pygame.Rect(24, 24, 300, 520)),
+                            (RED if my_team == BLUE else BLUE, pygame.Rect(WIDTH - 324, 24, 300, 520))):
+            self.draw_team_panel(surf, panel, team, room, team == my_team)
 
         # 스킬: 아이콘과 이름만 보여 주고, 마우스를 올리면 자세한 설명이 뜬다
         mouse = ui.mouse_pos()
@@ -249,7 +241,6 @@ class SelectScene(Scene):
         ch = gamedata.champion(self.preview) if self.preview else None
         if not ch:
             ui.panel(surf, SKILL_PANEL)
-            ui.text(surf, "왼쪽 목록에서 챔피언을 골라 주세요", SKILL_PANEL.center, 20, ui.TEXT_DIM, anchor="center")
         if ch:
             ui.panel(surf, SKILL_PANEL)
             ui.text(surf, f"{ch['name']} - {ch['title']}", (44, 558), 20, bold=True)
@@ -281,7 +272,6 @@ class SelectScene(Scene):
                     ui.text(surf, f"재사용 {cd}초", (x + ICON + 12, 628), 13, ui.TEXT_DIM)
                 if hover:
                     tooltip = ("skill", k, ab, rect)
-            ui.text(surf, "스킬 아이콘에 마우스를 올리면 자세한 설명이 보입니다.", (44, 676), 13, ui.TEXT_DIM)
 
         self.btn_lock.draw(surf)
 
@@ -305,6 +295,43 @@ class SelectScene(Scene):
             tooltip = self.draw_picker(surf, mouse) or tooltip
         if tooltip:
             self.draw_tooltip(surf, tooltip)
+
+    def draw_team_panel(self, surf, panel, team, room, ally):
+        """팀 한쪽 목록: 플레이어마다 고른 챔피언 초상화(아직 안 골랐으면 빈 원), 이름, 챔피언 이름, 소환사 주문(우리 팀만).
+        확정한 플레이어는 테두리가 팀 색으로 밝고, 고르는 중이면 흐리다."""
+        ui.panel(surf, panel, (12, 18, 30, 220), ui.BORDER)
+        col = ui.TEAM_UI[team]
+        ui.text(surf, TEAM_NAMES[team], (panel.x + 18, panel.y + 14), 18, col, bold=True)
+        members = [m for m in room["members"] if m["team"] == team]
+        h = min(104, (panel.height - 56) // max(1, len(members)))
+        y = panel.y + 48
+        for m in members:
+            card = pygame.Rect(panel.x + 10, y, panel.width - 20, h - 8)
+            mine = m["key"] == self.app.my_key
+            ui.panel(surf, card, (32, 46, 74, 235) if mine else (20, 28, 44, 230),
+                     col if m["locked"] else (ui.HIGHLIGHT if mine else ui.BORDER), radius=8)
+            pc = (card.x + 12 + 34, card.centery)
+            if m["champ"]:
+                chd = gamedata.champion(m["champ"]) or {}
+                draw_round_portrait(surf, m["champ"], pc, 34, col if m["locked"] else (120, 130, 150), False,
+                                    tuple(chd.get("color", (200, 200, 200))), ring_w=3 if m["locked"] else 2)
+                if not m["locked"]:
+                    shade(surf, pygame.Rect(pc[0] - 34, pc[1] - 34, 68, 68), (0, 0, 0, 90), 34)
+                cname = chd.get("name", "")
+            else:
+                pygame.draw.circle(surf, (14, 18, 28), pc, 34)
+                pygame.draw.circle(surf, (80, 90, 110), pc, 34, 2)
+                cname = "선택 중..."
+            tx = pc[0] + 46
+            ui.text(surf, m["name"] + (" (나)" if mine else ""), (tx, card.centery - 12), 15,
+                    ui.GOLD if mine else ui.TEXT, anchor="midleft", bold=True)
+            ui.text(surf, cname, (tx, card.centery + 12), 13, ui.TEXT if m["locked"] else ui.TEXT_DIM, anchor="midleft")
+            if ally:                                    # 같은 팀만 소환사 주문이 보인다 (내 것은 지금 고른 것)
+                spells = self.app.keybinds.spells if mine else m.get("spells") or []
+                for j, sid in enumerate(spells[:2]):
+                    sr = pygame.Rect(card.right - 34, card.centery - 31 + j * 32, 28, 28)
+                    self.draw_spell_icon(surf, sr, sid)
+            y += h
 
     def draw_swap(self, surf, mouse):
         """두 주문 칸 사이의 자리 바꾸기 버튼 (좌우 화살표)."""

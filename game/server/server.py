@@ -41,7 +41,7 @@ class Member:
 
     def public(self):
         return {"key": self.key, "name": self.name, "team": self.team, "bot": self.bot,
-                "champ": self.champ, "locked": self.locked}
+                "champ": self.champ, "locked": self.locked, "spells": self.spells}
 
 
 class Room:
@@ -259,7 +259,10 @@ class GameServer:
         elif t == "spells":
             m = room.member(client.key)
             if m and room.phase in ("waiting", "select") and valid_pair(msg.get("spells")):
-                m.spells = list(msg["spells"])
+                if m.spells != list(msg["spells"]):
+                    m.spells = list(msg["spells"])
+                    if room.phase == "select":
+                        self.broadcast_room(room)          # 선택 화면에서 같은 팀이 고른 주문도 보인다
         elif t == "pick":
             m = room.member(client.key)
             cid = msg.get("champ")

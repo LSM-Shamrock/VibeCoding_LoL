@@ -132,6 +132,7 @@ class Champion(Unit):
         self.multi_n = 0            # 짧은 시간 안에 이어진 킬 수 (더블킬 ~ 펜타킬)
         self.multi_t = -99.0
         self.items = []
+        self.ping_times = []         # 최근 핑 시각 (너무 자주 찍지 못하게)
         self.undo = []               # 상점 되돌리기 기록 [{"items": 그 전 아이템 목록, "gold": 되돌리면 돌려받을 골드}] (상점을 벗어나면 비움)
         self.ranks = {"Q": 0, "W": 0, "E": 0, "R": 0}
         self.skill_points = START_LEVEL
