@@ -72,6 +72,30 @@ def can_buy(owned, iid, slots):
     return True, used, price, ""
 
 
+def purchase_plan(owned, iid, gold, slots):
+    """구매 버튼을 눌렀을 때 실제로 살 아이템 순서 (롤 상점처럼).
+    iid 를 살 돈이 있으면 [iid], 모자라면 아직 없는 재료 중 비싼 것부터 살 수 있는 만큼. 살 게 없으면 []."""
+    ok, used, price, _why = can_buy(owned, iid, slots)
+    if not ok:
+        return []
+    if gold >= price:
+        return [iid]
+    its = items()
+    missing = list(its[iid].get("from", []))
+    for comp in used:
+        missing.remove(comp)
+    plan, inv, left = [], list(owned), gold
+    for comp in sorted(missing, key=lambda i: -its[i]["cost"]):
+        ok2, used2, price2, _ = can_buy(inv, comp, slots)
+        if ok2 and left >= price2:
+            for u in used2:
+                inv.remove(u)
+            inv.append(comp)
+            left -= price2
+            plan.append(comp)
+    return plan
+
+
 def upgrades_of(iid):
     """iid 를 재료로 쓰는 2단계 아이템 id 목록."""
     return [i for i, it in items().items() if iid in it.get("from", [])]

@@ -132,6 +132,7 @@ class Champion(Unit):
         self.multi_n = 0            # 짧은 시간 안에 이어진 킬 수 (더블킬 ~ 펜타킬)
         self.multi_t = -99.0
         self.items = []
+        self.undo = []               # 상점 되돌리기 기록 [{"items": 그 전 아이템 목록, "gold": 되돌리면 돌려받을 골드}] (상점을 벗어나면 비움)
         self.ranks = {"Q": 0, "W": 0, "E": 0, "R": 0}
         self.skill_points = START_LEVEL
         self.ready_at = {"Q": 0.0, "W": 0.0, "E": 0.0, "R": 0.0, "D": 0.0, "F": 0.0}
@@ -342,6 +343,7 @@ class GroundEffect:
         self.trigger_at = trigger_at
         self.style = style
         self.on_trigger = on_trigger
+        self.follow = None            # 따라가는 대상 유닛 id (대상 지정 스킬의 예고 원)
 
 
 class Anchor(Unit):

@@ -185,6 +185,50 @@ def _wrap(a):
     return a
 
 
+def heavy_chain(state, tx, tz, start, dt, rate_head, rate_tail, max_bend=None):
+    """긴 몸(이무기 몸통·용 꼬리)을 묵직하게 끌고 다닌다.
+    start 앞의 마디는 목표 자리(머리가 지나온 길)에 그대로 두고, 그 뒤는 마디마다 방향(앞 마디 -> 이 마디)을 들고 있다가
+    목표 모양의 방향 쪽으로 rate_head(start 마디) ~ rate_tail(꼬리 끝) 의 빠르기(1/초)로만 돌린다. 위치는 앞 마디에서
+    그 방향으로 목표 모양의 간격만큼 이어 붙인다. max_bend(rad) 가 있으면 앞 마디와 꺾이는 각도도 그 이하로 묶어
+    몸이 빳빳해진다. 그래서 빙빙 돌아도 꼬리가 길을 그대로 따라 작게 꼬이지 않고, 늦게 묵직하게 돈다.
+    state: 지난 프레임의 마디 방향 배열 (없으면 None). 반환: (x, z, 새 방향 배열)."""
+    n = len(tx)
+    start = max(1, min(n, start))
+    dx, dz = np.diff(tx), np.diff(tz)
+    seg = np.hypot(dx, dz)
+    want = np.arctan2(dz, dx)                          # want[k-1] = 마디 k-1 -> k 의 목표 방향
+    if state is None or len(state) != n - 1:
+        return tx.copy(), tz.copy(), want
+    ang = state.copy()
+    ang[:start - 1] = want[:start - 1]
+    u = np.clip((np.arange(1, n) - start) / max(1, n - 1 - start), 0.0, 1.0)
+    k = 1 - np.exp(-(rate_head + (rate_tail - rate_head) * u) * dt)
+    d = (want - ang + np.pi) % (2 * np.pi) - np.pi
+    ang = ang + d * k
+    # 이웃 마디와 방향을 조금 고르게 (꼬리 끝이 꺾여 접히지 않게)
+    s0 = start - 1
+    if n - 1 - s0 > 2:
+        a = ang[s0:]
+        dl = (np.roll(a, 1) - a + np.pi) % (2 * np.pi) - np.pi
+        dr = (np.roll(a, -1) - a + np.pi) % (2 * np.pi) - np.pi
+        dl[0] = dr[-1] = 0.0
+        ang[s0:] = a + 0.25 * (dl + dr)
+    if max_bend is not None and s0 > 0:
+        al = ang.tolist()
+        for j in range(s0, n - 1):
+            rel = (al[j] - al[j - 1] + math.pi) % (2 * math.pi) - math.pi
+            if rel > max_bend:
+                al[j] = al[j - 1] + max_bend
+            elif rel < -max_bend:
+                al[j] = al[j - 1] - max_bend
+        ang = np.array(al)
+    x, z = tx.copy(), tz.copy()
+    cx, cz = np.cos(ang[s0:]) * seg[s0:], np.sin(ang[s0:]) * seg[s0:]
+    x[start:] = x[start - 1] + np.cumsum(cx)
+    z[start:] = z[start - 1] + np.cumsum(cz)
+    return x, z, ang
+
+
 class _Debris:
     __slots__ = ("mesh", "base", "pos", "ang", "vel", "spin", "tint", "unlit", "rest", "r")
 

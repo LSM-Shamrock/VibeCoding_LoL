@@ -7,7 +7,7 @@
 - Ctrl + Q/W/E/R: 스킬 레벨 업 (HUD 의 + 버튼 클릭도 가능)
 - D: 점멸, F: 표식(눈덩이) — 맞힌 뒤 F 를 다시 누르면 대상에게 돌진
 - A + 좌클릭: 공격 이동, S: 정지
-- B: 귀환 (8초 정신집중, 이동/공격/스킬/피해 시 취소), P: 상점 (사망 중이거나 우물 안에서만 구매), Tab: 점수판
+- P: 상점 (사망 중이거나 우물 안에서만 구매, 되돌리기는 상점을 벗어나기 전까지), Tab: 점수판
 - 시야: 아군 주변만 보이고(전장의 안개), 부쉬 안의 적은 같은 부쉬에 들어가야 보인다
 - Y: 카메라 고정/자유 전환 (처음엔 자유 카메라), F6~F9: 테스트 치트 (체력/마나/쿨타임/레벨), Space: 내 챔피언으로 카메라 이동, 마우스 휠: 줌
 - Enter: 채팅 (Enter 로 보내기, Esc 로 취소). 킬·포탑 파괴 같은 알림도 채팅창에 올라온다
@@ -393,6 +393,8 @@ class GameScene(Scene):
         self.rmb_minimap = False    # 미니맵을 우클릭한 채로 있으면 계속 이동 명령
         self.shop_rects = []
         self.shop_buy_rect = None      # 상점 오른쪽 구매 버튼
+        self.shop_undo_rect = None     # 상점 되돌리기 버튼
+        self.slam_follow = {}          # 이무기 id -> (내려찍기 대상 id, 끝나는 시각)
         self.shop_sel = None           # 상점에서 고른 아이템 (구매 버튼으로 살 것)
         self.shop_view = None          # 상점 오른쪽에 조합 트리를 보여 주는 아이템
         self.shop_sel_pos = None       # 트리에서 고른 칸 위치
@@ -736,6 +738,8 @@ class GameScene(Scene):
             ch = self.champs.get(ev.get("d"))
             if ch and ch.ca and hasattr(ch.ca, "on_fx"):
                 ch.ca.on_fx(kind, ev)
+            if kind == "serpent_rear" and ev.get("tg"):        # 대상 지정 내려찍기: 쳐든 동안 머리가 대상을 따라간다
+                self.slam_follow[ev["d"]] = (ev["tg"], time.time() + float(ev.get("dur", 0.75)) + 0.15)
         if kind == "sky_dive":                                  # 불꽃 비행: 시전하는 순간부터 날아가는 동안 지면에 길(바깥·안쪽 바)과 착지 범위 표시
             self.leap_marks[ev.get("d")] = {"tg": None, "x": ev["x2"], "z": ev["z2"], "r": ev["r"], "zr": ev.get("zr", 0.0), "tm": ev.get("tm"),
                                             "ox": ev["x"], "oz": ev["z"], "w": ev.get("w", 5.0), "w2": ev.get("w2", 3.0),
@@ -1489,6 +1493,13 @@ class GameScene(Scene):
                 if self.shop_buy_rect and self.shop_buy_rect.collidepoint(pos):
                     self.buy_item(self.shop_sel)
                     return True
+                if self.shop_undo_rect and self.shop_undo_rect.collidepoint(pos):
+                    if self.me and self.me.get("ud") and self.me.get("shop"):
+                        self.audio.play("ui_click")
+                        self.send_cmd(c="undo")
+                    else:
+                        self.audio.play("ui_error")
+                    return True
                 for iid, rect, nav in self.shop_rects:
                     if rect.collidepoint(pos):
                         if iid != self.shop_sel:
@@ -1531,13 +1542,17 @@ class GameScene(Scene):
                 return
 
     def buy_item(self, iid):
-        """상점 구매 요청. 신발을 이미 가졌거나 인벤토리가 가득 차면 이유를 알려 주고 보내지 않는다."""
+        """상점 구매 요청. 신발을 이미 가졌거나 인벤토리가 가득 차면 이유를 알려 주고 보내지 않는다.
+        돈이 모자라면 서버가 살 수 있는 재료부터 산다 (그것도 없으면 보내지 않는다)."""
         me = self.me
         if me:
             ok, _used, _price, why = gamedata.can_buy(list(me["it"]), iid, INVENTORY_SLOTS)
             if not ok:
                 self.audio.play("ui_error")
                 self.app.toast(why, 2.0)
+                return
+            if not gamedata.purchase_plan(list(me["it"]), iid, me["g"], INVENTORY_SLOTS):
+                self.audio.play("ui_error")
                 return
         self.send_cmd(c="buy", item=iid)
 
@@ -1557,6 +1572,13 @@ class GameScene(Scene):
                     e.ca.win()
         for e in self.minions.values():
             e.step(dt)
+        now_ = time.time()
+        for sid, (tid, until) in list(self.slam_follow.items()):
+            ch, tgt = self.champs.get(sid), self.champs.get(tid)
+            if now_ > until or not ch or not ch.ca or not tgt or not tgt.visible:
+                del self.slam_follow[sid]
+            elif hasattr(ch.ca, "aim_slam"):
+                ch.ca.aim_slam(tgt.x, tgt.z)
         self.vis_timer -= dt
         if self.vis_timer <= 0:
             self.vis_timer = 0.1
@@ -2078,6 +2100,18 @@ class GameScene(Scene):
                 best, bd = e, dd
         return best
 
+    def draw_serpent_slam_area(self, x, z, ab, col):
+        """이무기 내려찍기 범위: 안쪽 = 피해·기절, 바깥쪽(더 넓고 연함) = 충격파."""
+        m = self.app.models
+        r = self.app.renderer
+        wr = ab.get("wave_radius", 0.0)
+        if wr > 0:
+            r.draw_transparent(m.disc, model_matrix(x, 0.05, z, scale=wr), (*col, 0.07))
+            r.draw_transparent(m.ring_thin, model_matrix(x, 0.06, z, scale=wr), (*col, 0.4))
+        rad = ab.get("radius", 2.0)
+        r.draw_transparent(m.disc, model_matrix(x, 0.07, z, scale=rad), (*col, 0.22))
+        r.draw_transparent(m.ring, model_matrix(x, 0.08, z, scale=rad), (*col, 0.9))
+
     def draw_slam_area(self, x, z, ab, col, strength=1.0, rings=True):
         """내려찍기 범위: 안쪽 = 광역 피해, 바깥쪽(더 넓고 연함) = 장판."""
         m = self.app.models
@@ -2243,6 +2277,7 @@ class GameScene(Scene):
             r.draw_transparent(m.ring, model_matrix(me.x, 0.08, me.z, scale=radius), (*col, 0.9))
         elif mode == "teleport":
             radius = ab.get("radius", 2.0)
+            r.draw_transparent(m.ring_thin, model_matrix(me.x, 0.06, me.z, scale=rng), (*col, 0.6))     # 최대 사거리
             k = min(1.0, rng / dist)
             ex, ez = me.x + dx * k, me.z + dz * k
             r.draw_transparent(self.beam, model_matrix(me.x, 0.07, me.z, rot_y=ang, sx=0.18, sy=0.05,
@@ -2261,11 +2296,16 @@ class GameScene(Scene):
                 if typ == "leap_slam":                       # 대상이 없어도 마우스 위치(사거리 안으로 제한) 기준으로 범위를 보여 준다
                     k = min(1.0, rng / dist)
                     self.draw_slam_area(me.x + dx * k, me.z + dz * k, ab, rcol)
+                elif typ == "serpent_slam":
+                    k = min(1.0, rng / dist)
+                    self.draw_serpent_slam_area(me.x + dx * k, me.z + dz * k, ab, rcol)
             else:
                 r.draw_transparent(m.ring, model_matrix(best.x, 0.09, best.z, scale=1.05), (1.0, 0.45, 0.35, 0.95))
                 r.draw_transparent(m.disc, model_matrix(best.x, 0.08, best.z, scale=1.0), (1.0, 0.45, 0.35, 0.22))
                 if typ == "leap_slam":                       # 덮쳐 내려찍기: 광역 피해 범위(진하게) + 그보다 넓은 장판 범위(연하게)
                     self.draw_slam_area(best.x, best.z, ab, (1.0, 0.45, 0.35) if cd <= 0 and not unlearned else col)
+                elif typ == "serpent_slam":                  # 이무기 내려찍기: 기절 범위(진하게) + 충격파 범위(연하게)
+                    self.draw_serpent_slam_area(best.x, best.z, ab, (1.0, 0.45, 0.35) if cd <= 0 and not unlearned else col)
         elif mode == "ally":
             r.draw_transparent(m.ring_thin, model_matrix(me.x, 0.06, me.z, scale=rng), (*col, 0.5))
             best, bd = None, 1e9
@@ -2935,6 +2975,7 @@ class GameScene(Scene):
             ui.text(surf, f"{me['g']} G", (p.right - 20, p.y + 16), 22, ui.GOLD, anchor="topright", bold=True)
         self.shop_rects = []
         self.shop_buy_rect = None
+        self.shop_undo_rect = None
         mouse = ui.mouse_pos()
         its = gamedata.items()
         owned = list(me["it"]) if me else []
@@ -2974,7 +3015,7 @@ class GameScene(Scene):
 
         # 오른쪽: 고른 아이템
         area = pygame.Rect(mid.right + 10, top, p.right - mid.right - 24, p.bottom - top - 14)
-        self.draw_shop_detail(surf, area, self.shop_view, sel, owned, gold, can, mouse)
+        self.draw_shop_detail(surf, area, self.shop_view, sel, owned, gold, can, mouse, bool(me and me.get("ud")))
 
         # 마우스를 올린 아이템 이름
         hov = next((iid for iid, r, _nav in self.shop_rects if r.collidepoint(mouse)), None)
@@ -3013,7 +3054,7 @@ class GameScene(Scene):
             pygame.draw.circle(surf, (110, 220, 130), (ir.right - 4, ir.y + 4), 4)
         self.shop_rects.append((iid, rect, True))
 
-    def draw_shop_detail(self, surf, area, view, sel, owned, gold, can, mouse):
+    def draw_shop_detail(self, surf, area, view, sel, owned, gold, can, mouse, undo=False):
         """오른쪽 창: 위에 고른 아이템(sel)의 이름·가격·능력치, 가운데에 view 아이템의 조합 트리와 상위 아이템, 아래에 구매 버튼.
 
         트리 안의 재료를 누르면 트리(view)는 그대로 두고 그 재료만 골라진다 (구매 버튼으로 산다).
@@ -3075,9 +3116,16 @@ class GameScene(Scene):
                 self.draw_tree_node(surf, r, u, False, mouse, sel, nav=True)
             y += ((len(ups) + 4) // 5) * 50
 
-        # 구매 버튼
-        btn = pygame.Rect(area.x + 12, area.bottom - 58, area.width - 24, 46)
-        ok = can and allowed and gold >= price
+        # 되돌리기 + 구매 버튼 (돈이 모자라도 살 수 있는 재료가 있으면 구매 버튼이 켜진다)
+        ub = pygame.Rect(area.x + 12, area.bottom - 58, 96, 46)
+        uok = can and undo
+        uhover = ub.collidepoint(mouse)
+        pygame.draw.rect(surf, ((70, 90, 130) if uhover else (52, 68, 102)) if uok else (40, 44, 56), ub, border_radius=6)
+        pygame.draw.rect(surf, ui.HIGHLIGHT if uok and uhover else ui.BORDER, ub, 1, border_radius=6)
+        ui.text(surf, "되돌리기", ub.center, 15, ui.TEXT if uok else ui.TEXT_DIM, anchor="center", bold=True)
+        self.shop_undo_rect = ub
+        btn = pygame.Rect(ub.right + 8, area.bottom - 58, area.right - 12 - (ub.right + 8), 46)
+        ok = can and bool(gamedata.purchase_plan(owned, sel, gold, INVENTORY_SLOTS))
         hover = btn.collidepoint(mouse)
         col = ((60, 150, 90) if hover else (44, 124, 72)) if ok else (48, 52, 64)
         pygame.draw.rect(surf, col, btn, border_radius=6)
@@ -3102,7 +3150,7 @@ class GameScene(Scene):
     def draw_scoreboard(self, surf):
         """Tab 점수판 (롤처럼): 위에 팀 요약, 아래 블루팀은 왼쪽 / 레드팀은 오른쪽에 플레이어별 정보.
 
-        시야와 상관없이 모두 보인다 (레벨, K/D/A, CS, 아이템, 골드).
+        시야와 상관없이 모두 보인다 (레벨, K/D/A, 현상금, CS, 아이템).
         """
         items = gamedata.items()
         per_team = max(sum(1 for c in self.champ_info.values() if c["tm"] == t) for t in (BLUE, RED))
@@ -3141,7 +3189,7 @@ class GameScene(Scene):
         for team in (BLUE, RED):
             x0 = cols[team]
             y = p.y + 70
-            for cid, lv, k, dth, a, cs, gold, inv, dead, rt, bounty in rows_by_team[team]:
+            for cid, lv, k, dth, a, cs, _gold, inv, dead, rt, bounty in rows_by_team[team]:
                 info = self.champ_info[cid]
                 ch = gamedata.champion(info["c"])
                 row = pygame.Rect(x0, y, col_w, 84)
@@ -3162,13 +3210,15 @@ class GameScene(Scene):
                 ui.text(surf, info["n"] + (" (나)" if mine else ""), (row.x + 76, row.centery - 11), 15,
                         ui.TEXT_DIM if dead else ui.TEXT, anchor="midleft", bold=True)
                 ui.text(surf, ch["name"], (row.x + 76, row.centery + 12), 12, ui.TEXT_DIM, anchor="midleft")
-                # K/D/A, CS
+                # K/D/A 와 그 밑에 현상금, 오른쪽에 CS
                 ui.text(surf, f"{k} / {dth} / {a}", (row.x + 236, row.centery - 9), 16, anchor="center", bold=True)
-                ui.text(surf, f"CS {cs}", (row.x + 236, row.centery + 13), 12, ui.TEXT_DIM, anchor="center")
+                ui.text(surf, f"현상금 {bounty}", (row.x + 236, row.centery + 13), 12,
+                        (240, 150, 70) if bounty else ui.TEXT_DIM, anchor="center", bold=bool(bounty))
+                ui.text(surf, f"CS {cs}", (row.x + 318, row.centery), 14, ui.TEXT, anchor="center")
                 # 아이템 (인벤토리처럼 4칸 x 2줄)
                 for i in range(INVENTORY_SLOTS):
                     iid = inv[i] if i < len(inv) else None
-                    ix, iy = row.x + 300 + (i % INV_COLS) * 36, row.y + 7 + (i // INV_COLS) * 36
+                    ix, iy = row.x + 368 + (i % INV_COLS) * 36, row.y + 7 + (i // INV_COLS) * 36
                     ir = pygame.Rect(ix, iy, 34, 34)
                     pygame.draw.rect(surf, (10, 13, 20), ir, border_radius=4)
                     if iid is not None:
@@ -3176,12 +3226,6 @@ class GameScene(Scene):
                         if ir.collidepoint(mouse):
                             tip = (items[iid]["name"], ir)
                     pygame.draw.rect(surf, ui.BORDER, ir, 1, border_radius=4)
-                # 골드
-                ui.text(surf, f"{gold:,} G", (row.right - 12, row.centery - (9 if bounty else 0)), 14, ui.GOLD,
-                        anchor="midright", bold=True)
-                if bounty:                                  # 현상금 (이 챔피언을 처치하면 더 받는 제압 골드)
-                    ui.text(surf, f"현상금 {bounty}", (row.right - 12, row.centery + 12), 12, (240, 150, 70),
-                            anchor="midright", bold=True)
                 y += 90
         if tip:
             name, ir = tip

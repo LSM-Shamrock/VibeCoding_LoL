@@ -628,6 +628,8 @@ class Simulation:
                 self.buy(c, msg["item"])
             elif cmd == "sell":
                 self.sell(c, int(msg["slot"]))
+            elif cmd == "undo":
+                self.undo(c)
             elif c.dead:
                 return
             elif cmd == "move":
@@ -680,23 +682,43 @@ class Simulation:
         c.skill_points -= 1
 
     def buy(self, c, iid):
-        item = gamedata.items().get(iid)
-        if item is None or not self.can_shop(c):
+        """구매. 돈이 모자라면 롤처럼 아직 없는 재료를 살 수 있는 만큼 산다 (gamedata.purchase_plan). 한 번 누른 구매가 되돌리기 한 번."""
+        if iid not in gamedata.items() or not self.can_shop(c):
             return
-        ok, used, price, _why = gamedata.can_buy(c.items, iid, INVENTORY_SLOTS)    # 가진 하위 아이템은 재료로 쓰여 값이 깎인다 / 신발은 하나만
-        if not ok or c.gold < price:
+        plan = gamedata.purchase_plan(c.items, iid, c.gold, INVENTORY_SLOTS)
+        if not plan:
             return
-        for comp in used:
-            c.items.remove(comp)
-        c.gold -= price
-        c.items.append(iid)
+        before, spent = list(c.items), 0.0
+        for one in plan:
+            ok, used, price, _why = gamedata.can_buy(c.items, one, INVENTORY_SLOTS)    # 가진 하위 아이템은 재료로 쓰여 값이 깎인다 / 신발은 하나만
+            if not ok or c.gold < price:
+                break
+            for comp in used:
+                c.items.remove(comp)
+            c.gold -= price
+            spent += price
+            c.items.append(one)
+        if spent > 0:
+            c.undo.append({"items": before, "gold": spent})
         c.recompute_stats(self.time)
 
     def sell(self, c, slot):
         if not self.can_shop(c) or not (0 <= slot < len(c.items)):
             return
+        before = list(c.items)
         iid = c.items.pop(slot)
-        c.gold += gamedata.items()[iid]["cost"] * SELL_RATIO
+        refund = gamedata.items()[iid]["cost"] * SELL_RATIO
+        c.gold += refund
+        c.undo.append({"items": before, "gold": -refund})
+        c.recompute_stats(self.time)
+
+    def undo(self, c):
+        """상점 되돌리기: 마지막 구매·판매를 없던 일로 (아이템과 골드를 그 전으로)."""
+        if not c.undo or not self.can_shop(c):
+            return
+        last = c.undo.pop()
+        c.items = list(last["items"])
+        c.gold = max(0.0, c.gold + last["gold"])
         c.recompute_stats(self.time)
 
     # ------------------------------------------------------------------ 스킬
@@ -977,6 +999,12 @@ class Simulation:
             self.update_structure(s, dt)
         self.update_projectiles(dt)
         for e in list(self.effects.values()):
+            if e.follow is not None:                        # 대상 지정 스킬의 예고 원은 대상을 따라간다 (사라지면 그 자리)
+                u = self.unit(e.follow)
+                if self.targetable(u, e.team):
+                    e.x, e.z = u.x, u.z
+                else:
+                    e.follow = None
             if t >= e.trigger_at:
                 del self.effects[e.id]
                 e.on_trigger(self, e)
@@ -1041,6 +1069,8 @@ class Simulation:
 
     def update_champion(self, c, dt):
         t = self.time
+        if c.undo and not self.can_shop(c):
+            c.undo = []                     # 상점(우물)을 벗어나면 되돌리기 기록은 사라진다
         if c.dead:
             if t >= c.respawn_at:
                 c.dead = False
@@ -1628,7 +1658,7 @@ class Simulation:
             "cd": {k: round(max(0.0, v - t), 1) for k, v in c.ready_at.items()},
             "mk": bool(c.mark), "spl": c.spells, "dead": c.dead, "rt": round(max(0.0, c.respawn_at - t), 1) if c.dead else 0,
             "st": st, "a": c.anim, "k": c.kills, "d": c.deaths, "as": c.assists, "cs": c.cs,
-            "shop": self.can_shop(c),
+            "shop": self.can_shop(c), "ud": len(c.undo),
             "s": {"ad": round(c.stats["ad"]), "ap": round(c.stats["ap"]), "ar": round(c.stats["armor"]),
                   "mr": round(c.stats["mr"]), "aspd": round(c.stats["attack_speed"], 2),
                   "ms": round(c.stats["move_speed"] * 100), "ah": round(c.stats["ability_haste"]),

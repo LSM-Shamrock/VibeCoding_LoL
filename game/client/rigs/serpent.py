@@ -24,7 +24,7 @@ import pygame
 from ..champ_anim import DEATH_FADE, DEATH_SHOW
 from ..geometry import MeshBuilder
 from ..gl import Mesh, facing_to_rot
-from .spider import _T, _S, _Rx, _Ry, _Rz, _euler, _from_to, _hex, _wrap, _xf
+from .spider import _T, _S, _Rx, _Ry, _Rz, _euler, _from_to, _hex, _wrap, _xf, heavy_chain
 from . import CHAMP_SCALE
 
 PI = math.pi
@@ -50,6 +50,9 @@ ATTACK_TIME = 0.34
 HEAVY_POS = 7.0                 # 머리가 이동 목표를 따라가는 속도 (낮을수록 묵직하게 끌려간다)
 HEAVY_TURN = 6.0                # 머리 방향이 바뀌는 속도
 MAX_TURN = 4.5                  # 머리가 돌 수 있는 최대 각속도 (rad/s)
+BODY_TURN = 14.0                # 이동 중 세운 목 바로 뒤 마디가 지나온 길의 방향으로 돌아서는 빠르기 (1/초)
+TAIL_TURN = 2.2                 # ... 꼬리 끝은 이만큼만 (낮을수록 빙빙 돌 때 꼬리가 묵직하게 늦게 돈다)
+BODY_BEND = math.radians(4.5)   # 이동 중 몸(S자 물결을 넣기 전의 길)이 마디 하나에서 꺾일 수 있는 최대 각도 (작을수록 빳빳)
 FWD = 4.0                       # 모델을 앞(머리 쪽)으로 당기는 거리 (보스 단위): 발밑 원 그림자가 모델보다 살짝 뒤에 오게
 
 _SCALE = _S(SC)
@@ -484,6 +487,7 @@ class SerpentAnim:
         self.moving = False
         self.still_t = 0.0
         self.rx = self.rz = None                                # 마디의 (프레임 사이에 이어지는) 위치
+        self.rang = None                                        # 이동 중 마디 방향 (묵직하게 돌아서게)
         self.extra = None                                       # 겹침으로 올라탄 높이 (프레임 사이 부드럽게)
         self.dt_last = 1.0                                      # 마지막 프레임 시간 (접힘 속도 계산용)
         self.fold_rate = 4.0
@@ -583,6 +587,11 @@ class SerpentAnim:
             self._play([(0.55, 'rise')])
             self.auto_emerge = None
 
+    def aim_slam(self, x, z):
+        """내려찍기 목표를 (월드 좌표) 대상의 지금 위치로 옮긴다 (대상 지정 E: 쳐든 머리가 대상을 따라간다)."""
+        if self.slam_tgt is not None:
+            self.slam_tgt = (x / SC, z / SC)
+
     def leap(self, dur, delay=0.0):
         pass
 
@@ -662,6 +671,7 @@ class SerpentAnim:
             pts += [x - dx * i * TS, z - dz * i * TS]
         self._set_trail(pts)
         self.rx = self.rz = None
+        self.rang = None
 
     def _push_trail(self):
         """머리가 이번 프레임에 간 만큼 궤적에 점을 더한다."""
@@ -733,6 +743,21 @@ class SerpentAnim:
         tdz_raw = np.where(good, (pz[m] - pz[m + 1]) / safe, 0.0)
         tdx = np.where(valid, tdx_raw[src_c], t0x)
         tdz = np.where(valid, tdz_raw[src_c], t0z)
+        if self.tgt['fold'] <= 0.5 and self.rx is not None:
+            # 달릴 때: 세운 목까지는 지나온 길 그대로, 그 뒤 몸은 꼬리로 갈수록 늦게 돌아서고 빳빳해서
+            # 제자리에서 빙빙 돌아도 길을 따라 작게 꼬이지 않고 묵직하게 끌려온다 (S자 물결은 그 위에 얹는다)
+            x, zz, self.rang = heavy_chain(self.rang, x, zz, int(se / DSEG) + 2, self.dt_last, BODY_TURN, TAIL_TURN, BODY_BEND)
+            gx_ = np.empty(NR)
+            gz_ = np.empty(NR)
+            gx_[1:-1], gz_[1:-1] = x[:-2] - x[2:], zz[:-2] - zz[2:]
+            gx_[0], gz_[0] = x[0] - x[1], zz[0] - zz[1]
+            gx_[-1], gz_[-1] = x[-2] - x[-1], zz[-2] - zz[-1]
+            gl_ = np.hypot(gx_, gz_)
+            ok_ = gl_ > 1e-6
+            tdx = np.where(ok_, gx_ / np.where(ok_, gl_, 1.0), tdx)
+            tdz = np.where(ok_, gz_ / np.where(ok_, gl_, 1.0), tdz)
+        else:
+            self.rang = None
         x = x + (-tdz) * wob
         zz = zz + tdx * wob
         # ㄴ자로 세우고 뒤는 S자로 접은 자세 (fold 가 클수록 이 자세, 0 이면 궤적 그대로)

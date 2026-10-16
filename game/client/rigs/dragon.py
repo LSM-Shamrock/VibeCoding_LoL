@@ -23,7 +23,7 @@ import numpy as np
 from ..champ_anim import DEATH_FADE, DEATH_SHOW
 from ..geometry import MeshBuilder
 from ..gl import Mesh, facing_to_rot
-from .spider import _S, _T, _Rx, _Ry, _euler, _from_to, _wrap
+from .spider import _S, _T, _Rx, _Ry, _euler, _from_to, _wrap, heavy_chain
 from . import dragon_assets as A
 from . import CHAMP_SCALE
 
@@ -56,6 +56,9 @@ IH = _at(0.434)                 # 날개막 뒤쪽이 붙는 마디
 IFL = _at(0.229)                # 앞다리
 IHL = _at(0.37)                 # 뒷다리
 KC = (IFL + IHL) // 2           # 챔피언 위치(가슴 한가운데)에 놓이는 마디
+TAIL_TURN0 = 12.0               # 뒷다리 바로 뒤 꼬리 마디가 지나온 길의 방향으로 돌아서는 빠르기 (1/초)
+TAIL_TURN1 = 2.2                # ... 꼬리 끝은 이만큼만 (낮을수록 빙빙 돌 때 꼬리가 묵직하게 늦게 돈다)
+TAIL_BEND = math.radians(1.6)   # 꼬리가 마디 하나에서 꺾일 수 있는 최대 각도 (작을수록 빳빳해 작게 말리지 않는다)
 NR = IHL + int(round((NR_FULL - 1 - IHL) * TAIL_K)) + 1       # 뒷다리 뒤의 꼬리만 TAIL_K 배로 줄인다
 BODY_LEN = (NR - 1) * DS
 CAP = int(math.ceil((BODY_LEN + 30) / TS))
@@ -403,6 +406,7 @@ class DragonAnim:
         self.flap_ph = 0.0
         self.tr = np.zeros((CAP, 2))                            # 궤적 (가슴이 지나온 길, 가까운 것부터)
         self.last_push = (0.0, 0.0)
+        self.tail_ang = None                                    # 꼬리 마디의 (프레임 사이에 이어지는) 방향
         self.P = np.zeros((NR, 3))
         self.T = np.tile([0.0, 0.0, 1.0], (NR, 1))
         self.U = np.tile([0.0, 1.0, 0.0], (NR, 1))
@@ -503,6 +507,7 @@ class DragonAnim:
         self.tr[:, 1] = z - math.cos(yaw) * k
         self.last_push = (x, z)
         self.legs_ready = False
+        self.tail_ang = None
 
     def _push_trail(self):
         dx, dz = self.px - self.last_push[0], self.pz - self.last_push[1]
@@ -574,6 +579,8 @@ class DragonAnim:
         H = np.concatenate([[0.0], np.cumsum(step[KC:])])                    # 가슴 뒤쪽: 지나온 길을 따라간다
         X[KC:] = np.interp(H, cum, pts[:, 0])
         Z[KC:] = np.interp(H, cum, pts[:, 1])
+        # 뒷다리 뒤 꼬리: 밧줄처럼 끌려가며 끝으로 갈수록 늦게 따라온다 (빙빙 돌아도 길을 따라 꼬이지 않게)
+        X, Z, self.tail_ang = heavy_chain(self.tail_ang, X, Z, IHL + 1, dt, TAIL_TURN0, TAIL_TURN1, TAIL_BEND)
         # 머리를 앞으로 뻗기 (물어뜯기): 머리 쪽 마디일수록 많이 끌려 나온다
         ex = c['ext']
         if abs(ex) > 1e-3:

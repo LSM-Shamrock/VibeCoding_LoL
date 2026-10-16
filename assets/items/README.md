@@ -13,7 +13,6 @@
 | tome.png | 증폭의 서 | 47 |
 | cloth.png | 누빔 갑옷 | 24 |
 | cloak.png | 마력 차단 망토 | 29 |
-| swift_boots.png | 질풍의 장화 | 35 |
 | frost_edge.png | 서리칼날 | 01 |
 | storm_bow.png | 폭풍의 활 | 13 |
 | ice_reaper.png | 빙결 수확자 | 06 |
@@ -22,3 +21,13 @@
 | guardian_mail.png | 수호자의 흉갑 | 27 |
 | spirit_cloak.png | 정령의 외투 | 30 |
 | titan_heart.png | 거신의 심장 | 26 |
+
+신발 5종은 "fantasy_boot_item_pack" (512x512 원본을 128x128 로 줄임, AI 생성 콘셉트 에셋)에서 가져왔습니다. 배포 전 약관을 확인하세요.
+
+| 파일 | 아이템 | 원본 |
+| --- | --- | --- |
+| boots.png | 신발 | 20_worn_adventurer_boot |
+| swift_boots.png | 질풍의 장화 | 10_angel_wing_boot |
+| iron_treads.png | 강철 방화 신발 | 15_heavy_tank_boot |
+| sage_shoes.png | 현자의 신발 | 06_arcane_violet_boot |
+| mercury_boots.png | 수은 장화 | 12_ocean_pearl_boot |

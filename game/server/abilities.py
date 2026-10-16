@@ -955,9 +955,18 @@ def sweep_hit(sim, c, sw, ox, oz):
 
 @handler("serpent_slam")
 def serpent_slam(cx):
-    """E 내려찍기: 머리를 높이 쳐들었다가(예고 원) 한가운데로 내리꽂는다. 충격파 고리가 바깥으로 퍼지며 맞은 적을 늦춘다."""
+    """E 내려찍기: 머리를 높이 쳐들었다가(예고 원) 한가운데로 내리꽂는다. 충격파 고리가 바깥으로 퍼지며 맞은 적을 늦춘다.
+    대상 지정형("aim": "enemy")이면 마우스에 가장 가까운 적 챔피언을 노리고, 쳐든 동안 대상이 움직이면 예고 원도 따라간다."""
     sim, c, ab = cx.sim, cx.c, cx.ab
-    gx, gz = cx.ground_point(ab["range"])
+    follow = None
+    if ab.get("aim") == "enemy":
+        tg = sim.pick_enemy_champion(c, cx.x, cx.z, ab["range"])
+        if tg is None:
+            return False
+        follow = tg.id
+        gx, gz = tg.x, tg.z
+    else:
+        gx, gz = cx.ground_point(ab["range"])
     r = ab["radius"]
     wr = ab.get("wave_radius", r * 2.0)
     delay = ab.get("delay", 0.75)
@@ -967,6 +976,7 @@ def serpent_slam(cx):
     hit = set()
 
     def strike(sim_, eff):
+        gx, gz = eff.x, eff.z
         for u in sim_.enemies_in_radius(c.team, eff.x, eff.z, r):
             hit.add(u.id)
             sim_.deal_damage(c, u, dmg, dtype, ability=True)
@@ -987,10 +997,11 @@ def serpent_slam(cx):
             sim.schedule(ab.get("wave_delay", 0.14) * i, wave)
         fx(sim_, "shockwave", eff.x, eff.z, r=r, r2=wr, dur=ab.get("wave_delay", 0.14) * steps, tm=c.team)
     eff = GroundEffect(sim.new_id(), c.team, c, gx, gz, r, sim.time + delay, "serpent", strike)
+    eff.follow = follow
     sim.effects[eff.id] = eff
     c.clear_orders()
     c.lock_until = sim.time + delay                    # 머리를 쳐들었다 내리꽂는 동안은 움직이거나 다른 행동을 할 수 없다
-    fx(sim, "serpent_rear", c.x, c.z, d=c.id, dur=delay, x2=gx, z2=gz, tm=c.team)
+    fx(sim, "serpent_rear", c.x, c.z, d=c.id, dur=delay, x2=gx, z2=gz, tm=c.team, tg=follow)
     return True
 
 

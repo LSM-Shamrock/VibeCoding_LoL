@@ -132,33 +132,52 @@ class BotBrain:
                 return s
         return None
 
-    def dive_ok(self, sim, e):
-        """적 e 가 포탑 사거리 안에 있을 때 들어가서 처치하고 빠져나올 수 있는가.
-        포탑이 미니언을 때리고 있거나 사거리 밖이면 언제나 True."""
+    def under_turret(self, sim, x, z, margin=1.5):
+        """(x, z) 가 적 포탑 사거리(+margin) 안이면 그 포탑, 아니면 None.
+        적 챔피언을 때리면 미니언이 포탑 아래에 있어도 포탑이 나를 노리므로 여기서는 미니언을 따지지 않는다."""
+        for s in self.enemy_turrets(sim):
+            if math.hypot(s.x - x, s.z - z) <= mapdata.TURRET_RANGE + margin:
+                return s
+        return None
+
+    def quick_kill(self, sim, e):
+        """포탑 아래에서도 해 볼 만한가: 쫓아갈 필요 없이 이미 닿아 있고, 지금 쓸 수 있는 스킬과 평타로 1초 안에 끝내고
+        포탑에 맞으며 빠져나와도 체력이 넉넉히 남는다."""
         from .sim import TURRET_CHAMP_DMG, TURRET_PERIOD
         c = self.c
         t = sim.time
-        if not self.turret_threat(sim, e.x, e.z):
-            return True
-        if c.hp / max(1.0, c.max_hp) < 0.45:
+        if c.hp / max(1.0, c.max_hp) < 0.6:
             return False
-        # 지금 쓸 수 있는 스킬 피해 + 평타로 적을 녹이는 데 걸리는 시간
+        if c.dist_to(e) > c.stats["attack_range"] + c.radius + e.radius + 0.3:
+            return False
         burst = 0.0
         for slot in ("Q", "W", "E", "R"):
             ab = self.ab(slot)
             if ab.get("damage") and self.ready(sim, slot):
-                burst += sim.ability_damage(c, ab, c.ranks[slot]) * 0.7          # 방어력·빗나감 감안
+                burst += sim.ability_damage(c, ab, c.ranks[slot]) * 0.6          # 방어력·빗나감 감안
         dps = c.stats["ad"] * c.stats["attack_speed"] * 100.0 / (100.0 + max(0.0, e.armor))
         kill_time = max(0.0, (e.hp + e.shield_total(t) - burst) / max(1.0, dps))
-        if kill_time > 2.5:
+        if kill_time > 1.0:
             return False
-        # 들어가는 시간 + 처치 시간 + 빠져나오는 시간 동안 포탑에 맞는 피해 (연속으로 맞을수록 세진다)
-        reach = c.stats["attack_range"] + c.radius + e.radius
-        go_in = max(0.0, c.dist_to(e) - reach) / max(1.0, c.stats["move_speed"])
-        shots = int(math.ceil((go_in + kill_time + 1.6) / TURRET_PERIOD))
+        shots = int(math.ceil((kill_time + 2.0) / TURRET_PERIOD))        # 처치 + 사거리 밖으로 걸어 나오는 시간
         per = (TURRET_CHAMP_DMG + 2.5 * min(30.0, t / 60.0)) * 100.0 / (100.0 + max(0.0, c.armor))
         taken = sum(per * (1 + 0.4 * min(i, 3)) for i in range(shots))
-        return c.hp > taken * 1.25
+        return c.hp - taken > c.max_hp * 0.35
+
+    def dive_ok(self, sim, e):
+        """적 e 를 공격해도 되는가. 포탑 사거리 밖이거나, 내가 포탑 밖에 선 채로 닿거나,
+        포탑 아래라도 그 자리에서 바로 끝낼 수 있을 때만 True (체력이 낮다고 포탑 안까지 쫓아 들어가지 않는다)."""
+        c = self.c
+        if self.under_turret(sim, e.x, e.z, 1.0 + c.radius) is None:
+            return True
+        reach = c.stats["attack_range"] + c.radius + e.radius
+        if self.under_turret(sim, c.x, c.z, c.radius + 0.5) is None and c.dist_to(e) <= reach - 0.2:
+            return True
+        return self.quick_kill(sim, e)
+
+    def dash_ok(self, sim, e, x, z):
+        """(x, z) 로 뛰어드는 스킬을 써도 되는가: 도착 지점이 적 포탑 아래면 그 자리에서 끝낼 수 있을 때만."""
+        return self.under_turret(sim, x, z, 1.0) is None or self.quick_kill(sim, e)
 
     def remember(self, sim, enemies):
         """보이는 적의 위치를 기억해 둔다 (부쉬에 숨으면 마지막으로 본 곳을 쫓아간다)."""
@@ -190,7 +209,7 @@ class BotBrain:
         else:
             d = math.hypot(mx - c.x, mz - c.z) or 1.0
             tx, tz = mx + (mx - c.x) / d * 1.5, mz + (mz - c.z) / d * 1.5
-        if self.turret_threat(sim, tx, tz) or c.dist_xy(tx, tz) < 0.8:     # 포탑 아래거나, 가 봤는데 없다
+        if self.under_turret(sim, tx, tz) is not None or c.dist_xy(tx, tz) < 0.8:     # 포탑 아래거나, 가 봤는데 없다
             self.chase = None
             return False
         sim.cmd_move(c, tx, tz)
@@ -278,7 +297,7 @@ class BotBrain:
             in_bush = mapdata.bush_at(c.x, c.z) >= 0 or t < c.bush_until
             rng = ab["bush_range"] if in_bush else ab["range"]
             if (dist <= rng * 0.92 and dist > 2.0 and hp_ratio > 0.4
-                    and not self.turret_threat(sim, tx, tz) and len(enemies) <= 2):
+                    and self.dash_ok(sim, target, tx, tz) and len(enemies) <= 2):
                 return self.aim(sim, target, ab["speed"])
             return None
         if typ == "knife_throw":
@@ -294,13 +313,13 @@ class BotBrain:
         if typ == "lifesteal_buff":
             return me if dist <= 3.5 else None
         if typ == "ghost_walk":
-            if their < 0.45 and 3.0 < dist < 9.0 and not self.turret_threat(sim, tx, tz):
+            if their < 0.45 and 3.0 < dist < 9.0 and self.dash_ok(sim, target, tx, tz):
                 return (tx, tz)
             return None
         if typ == "knockback":
             return (tx, tz) if dist <= ab["range"] else None
         if typ == "teleport_strike":
-            if (dist >= 5.0 and (clustered or their < 0.35) and not self.turret_threat(sim, tx, tz)
+            if (dist >= 5.0 and (clustered or their < 0.35) and self.dash_ok(sim, target, tx, tz)
                     and hp_ratio > 0.5):
                 return (tx, tz)
             return None
@@ -341,7 +360,7 @@ class BotBrain:
                     return (c.x - (tx - c.x) / d * 4.0, c.z - (tz - c.z) / d * 4.0)
                 return None
             rng_atk = c.stats["attack_range"]
-            if their < 0.4 and rng_atk + 1 < dist < rng_atk + ab["range"] and not self.turret_threat(sim, tx, tz):
+            if their < 0.4 and rng_atk + 1 < dist < rng_atk + ab["range"] and self.dash_ok(sim, target, tx, tz):
                 return (tx, tz)
             return None
         if typ == "line_aoe":
@@ -357,11 +376,11 @@ class BotBrain:
         if typ == "spit_pool":                               # 독 뱉기: 가까운 적의 발밑에 독 웅덩이
             return self.aim(sim, target, None) if dist <= ab["range"] else None
         if typ == "lunge":                                   # 일직선 돌진: 사거리 안에서 적을 겨눠 달려든다
-            return self.aim(sim, target, None) if 2.0 < dist <= ab["range"] * 0.85 and not self.turret_threat(sim, tx, tz) else None
+            return self.aim(sim, target, None) if 2.0 < dist <= ab["range"] * 0.85 and self.dash_ok(sim, target, tx, tz) else None
         if typ == "serpent_slam":                            # 내려찍기: 가까이 선 적 한가운데로
             return self.aim(sim, target, None) if dist <= ab["range"] and (their < 0.7 or clustered or dist < 3.5) else None
         if typ == "dive":                                    # 잠행: 떨어져 있는 적에게 솟구친다
-            if 5.0 <= dist <= ab["range"] + 1.0 and hp_ratio > 0.4 and not self.turret_threat(sim, tx, tz):
+            if 5.0 <= dist <= ab["range"] + 1.0 and hp_ratio > 0.4 and self.dash_ok(sim, target, tx, tz):
                 return (tx, tz)
             return None
         if typ == "tornado":                                 # 회오리: 사거리 안의 적을 겨눠 굴린다
@@ -369,11 +388,11 @@ class BotBrain:
         if typ == "wing_sweep":                              # 날개 후려치기: 몸 둘레에 적이 붙어 있을 때
             return me if dist <= ab["radius"] * 0.85 else None
         if typ == "sky_dive":                                # 급강하: 모여 있거나 체력이 낮은 적 위로 (날아오르는 동안 움직임을 예측해 앞에)
-            if dist <= ab["range"] and (clustered or their < 0.55) and not self.turret_threat(sim, tx, tz):
+            if dist <= ab["range"] and (clustered or their < 0.55) and self.dash_ok(sim, target, tx, tz):
                 return self.aim(sim, target, 7.0)
             return None
         if typ == "leap_slam":                               # 도약: 떨어져 있는 적에게 덮친다
-            if (2.2 < dist <= ab["range"] + 0.5 and hp_ratio > 0.35 and not self.turret_threat(sim, tx, tz)):
+            if (2.2 < dist <= ab["range"] + 0.5 and hp_ratio > 0.35 and self.dash_ok(sim, target, tx, tz)):
                 return (tx, tz)
             return None
         if typ == "zone" and (ab.get("root") or ab.get("damage_per_sec")):   # 공격형 장판 (대자연의 정원, 독 거미줄)
@@ -516,6 +535,10 @@ class BotBrain:
                    if e.team != c.team and not e.dead and c.dist_to(e) <= 13 and sim.can_see(c.team, e)]
         allies = [a for a in sim.champions.values() if a.team == c.team and not a.dead and c.dist_to(a) <= 10]
         self.remember(sim, enemies)
+        # 쫓던 챔피언이 포탑 아래로 들어갔으면 하던 공격을 그만둔다 (공격 명령이 남아 있으면 계속 따라 들어간다)
+        chasing = sim.champions.get(c.attack_target) if c.attack_target else None
+        if chasing is not None and not self.dive_ok(sim, chasing):
+            c.clear_orders()
 
         if c.rope:
             self.rope_tick(sim, enemies)
@@ -577,6 +600,14 @@ class BotBrain:
             score = e.hp / max(1.0, e.max_hp) * 10 + c.dist_to(e)
             if score < best:
                 best, target = score, e
+        # ---- 포탑이 나를 노리면 (그 자리에서 바로 끝낼 적이 아니면) 사거리 밖으로 빠진다
+        tur = self.turret_on_me(sim)
+        if tur is not None and not (target is not None and self.quick_kill(sim, target)):
+            c.clear_orders()
+            away = math.hypot(c.x - tur.x, c.z - tur.z) or 1.0
+            out = mapdata.TURRET_RANGE + c.radius + 1.5
+            sim.cmd_move(c, tur.x + (c.x - tur.x) / away * out, tur.z + (c.z - tur.z) / away * out)
+            return
         if target is not None:
             their = target.hp / max(1.0, target.max_hp)
             dist = c.dist_to(target)
@@ -587,7 +618,8 @@ class BotBrain:
                 self.chase = target.id
                 if self.try_skills(sim, target, enemies, allies, hp_ratio):
                     return
-                if c.mark and their < 0.45 and hp_ratio > 0.5:
+                marked = sim.champions.get(c.mark[0]) if c.mark else None
+                if c.mark and their < 0.45 and hp_ratio > 0.5 and (marked is None or self.dash_ok(sim, marked, marked.x, marked.z)):
                     sim.mark(c, target.x, target.z)
                     return
                 if (c.spells[1] == "mark" and t >= c.ready_at["F"] and not c.mark and dist <= MARK_RANGE * 0.8
@@ -601,14 +633,6 @@ class BotBrain:
                 sim.cmd_move(c, c.x - direction * 3, c.z)
                 return
         elif self.chase_hidden(sim, hp_ratio):
-            return
-
-        # ---- 포탑이 나를 노리면 사거리 밖으로 빠진다 (포탑 아래에서 싸울 이유가 없다)
-        tur = self.turret_on_me(sim)
-        if tur is not None:
-            away = math.hypot(c.x - tur.x, c.z - tur.z) or 1.0
-            out = mapdata.TURRET_RANGE + c.radius + 1.5
-            sim.cmd_move(c, tur.x + (c.x - tur.x) / away * out, tur.z + (c.z - tur.z) / away * out)
             return
 
         # ---- 파밍 / 푸시
