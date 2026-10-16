@@ -27,9 +27,8 @@ from ...shared.constants import (
     SELL_RATIO, SIGHT,
 )
 from .. import ui
-from ..app import HEIGHT, SENS_MAX, SENS_MIN, WIDTH, Scene
+from ..app import HEIGHT, WIDTH, Scene
 from ..geometry import MeshBuilder
-from ..keybinds import ACTIONS
 from ..gl import Mesh, facing_to_rot, model_matrix
 from ..procedural import build_bush
 from ..rigs import CHAMP_SCALE
@@ -82,8 +81,6 @@ INV_COLS = 4                            # 인벤토리 4칸 x 2줄
 CHAT_X, CHAT_Y, CHAT_W = 12, 572, 440     # 채팅 입력칸 (왼쪽 아래, 로그는 그 위로 쌓임)
 CHAT_FONT, CHAT_LINE = 16, 22              # 채팅 글자 크기, 줄 간격
 CHAT_SHOW = 10.0                           # 채팅창이 닫혀 있을 때 새 줄이 보이는 시간 (초)
-SETTINGS_RECT = pygame.Rect(WIDTH // 2 - 320, 70, 640, 560)
-SETTINGS_TABS = [("keys", "조작키"), ("mouse", "마우스"), ("sound", "사운드")]
 BAR_H = 2.45 * CHAMP_SCALE + 0.2      # 챔피언 체력바 높이
 PICK_H = 2.0 * CHAMP_SCALE           # 챔피언을 마우스로 고를 수 있는 높이
 # 핑: 종류 -> (이름, 색). 핑 키(G)나 Alt 를 누른 채 좌클릭하면 신호, 누른 채 끌면 방향에 따라 위험 / 가는 중 / 도움 요청 / 실종
@@ -409,8 +406,6 @@ class GameScene(Scene):
         self.my_item_count = None
         self.foot_t = 0.0           # 다음 발소리까지 남은 시간
         self.shop_was_open = False
-        self.slider_rects = {}      # 설정 창의 막대 (volume 소리 크기 / sens 마우스 감도)
-        self.slider_drag = None     # 끌고 있는 막대
 
         self.shop_open = False
         self.show_score = False
@@ -446,10 +441,6 @@ class GameScene(Scene):
         self.fake_mouse = None      # 자동 테스트용
         self.binds = app.keybinds
         self.held = set()           # 누르고 있는 행동 (카메라 중심 등)
-        self.settings_open = False  # ESC 설정 창
-        self.settings_tab = "keys"  # 설정 창 탭: keys(조작키) / mouse(마우스) / sound(사운드)
-        self.rebinding = None       # 새 키를 기다리는 행동
-        self.settings_rects = []
         self.stat_rects = []
 
         # 스킬 범위 표시용 사각형 메시 (x: -0.5~0.5, z: 0~1)
@@ -1427,8 +1418,7 @@ class GameScene(Scene):
         self.send_cmd(c="cast", slot=slot, x=round(x, 2), z=round(z, 2))
 
     def handle_event(self, e):
-        if self.settings_open:
-            self.handle_settings_event(e)
+        if self.app.settings_ui.handle_event(e):
             return
         if self.chat_open and self.handle_chat_event(e):
             return
@@ -1563,152 +1553,17 @@ class GameScene(Scene):
         elif e.type == pygame.MOUSEWHEEL:
             self.zoom = max(16.0, min(ZOOM_MAX, self.zoom - e.y * 2.0))     # 처음 화면보다 넓게는 볼 수 없다
 
-    # ---- 설정 (ESC)
+    # ---- 설정 (ESC): 시작 화면·로비와 같은 설정 창 (app.settings_ui)
+    @property
+    def settings_open(self):
+        return self.app.settings_ui.open
+
     def open_settings(self):
-        self.sfx("ui_open")
-        self.settings_open = True
-        self.rebinding = None
+        self.app.settings_ui.show()
         self.aiming = None
         self.amove_pending = False
         self.rmb_down = False
         self.held.clear()
-
-    def handle_settings_event(self, e):
-        if e.type == pygame.KEYDOWN:
-            if self.rebinding:
-                if e.key != pygame.K_ESCAPE:
-                    self.binds.assign(self.rebinding, e)
-                self.rebinding = None
-            elif e.key == pygame.K_ESCAPE:
-                self.settings_open = False
-                self.sfx("ui_close")
-        elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
-            self.rebinding = None
-            for kind, rect in self.slider_rects.items():
-                if rect.inflate(12, 22).collidepoint(e.pos):
-                    self.slider_drag = kind
-                    self.set_slider_from_mouse(kind, e.pos[0])
-                    return
-            for kind, rect in self.settings_rects:
-                if rect.collidepoint(e.pos):
-                    if kind == "close":
-                        self.settings_open = False
-                        self.sfx("ui_close")
-                    elif kind.startswith("tab:"):
-                        if self.settings_tab != kind[4:]:
-                            self.settings_tab = kind[4:]
-                            self.sfx("ui_select")
-                    elif kind == "reset":
-                        self.binds.reset()
-                        self.sfx("ui_click")
-                    elif kind == "mute":
-                        self.audio.muted = not self.audio.muted
-                        self.audio.save_settings()
-                        self.sfx("ui_toggle")
-                    else:
-                        self.rebinding = kind
-                        self.sfx("ui_click")
-        elif e.type == pygame.MOUSEMOTION and self.slider_drag:
-            self.set_slider_from_mouse(self.slider_drag, e.pos[0])
-        elif e.type == pygame.MOUSEBUTTONUP and e.button == 1 and self.slider_drag:
-            kind, self.slider_drag = self.slider_drag, None
-            if kind == "volume":
-                self.audio.save_settings()
-                self.sfx("ui_confirm")                  # 바꾼 크기로 들려 준다
-            else:
-                self.app.save_mouse_sens()
-
-    def set_slider_from_mouse(self, kind, mx):
-        r = self.slider_rects.get(kind)
-        if r is None:
-            return
-        k = max(0.0, min(1.0, (mx - r.x) / max(1, r.width)))
-        if kind == "volume":
-            self.audio.set_volume(k)
-            if self.audio.muted and self.audio.volume > 0:
-                self.audio.muted = False
-        else:
-            self.app.set_mouse_sens(SENS_MIN + (SENS_MAX - SENS_MIN) * k)
-
-    def draw_settings(self, surf):
-        shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-        shade.fill((0, 0, 0, 140))
-        surf.blit(shade, (0, 0))
-        p = SETTINGS_RECT
-        ui.panel(surf, p, (12, 18, 30, 245), ui.BORDER)
-        ui.text(surf, "설정", (p.x + 24, p.y + 16), 22, bold=True)
-        mouse = ui.mouse_pos()
-        self.settings_rects = []
-        self.slider_rects = {}
-        # 탭: 왼쪽 세로 목록 (조작키 / 마우스 / 사운드), 오른쪽이 내용
-        for i, (tab, label) in enumerate(SETTINGS_TABS):
-            tr = pygame.Rect(p.x + 20, p.y + 64 + i * 44, 124, 36)
-            on = self.settings_tab == tab
-            pygame.draw.rect(surf, (45, 75, 125) if on else ((34, 46, 70) if tr.collidepoint(mouse) else (22, 30, 46)),
-                             tr, border_radius=6)
-            pygame.draw.rect(surf, ui.HIGHLIGHT if on else ui.BORDER, tr, 1, border_radius=6)
-            ui.text(surf, label, tr.center, 16, ui.TEXT if on else ui.TEXT_DIM, anchor="center", bold=on)
-            self.settings_rects.append(("tab:" + tab, tr))
-        pygame.draw.line(surf, ui.BORDER, (p.x + 160, p.y + 64), (p.x + 160, p.bottom - 20))
-        body = pygame.Rect(p.x + 180, p.y + 64, p.right - 24 - (p.x + 180), p.height - 64 - 72)
-        if self.settings_tab == "sound":
-            self.draw_settings_sound(surf, body, mouse)
-        elif self.settings_tab == "mouse":
-            self.draw_settings_mouse(surf, body)
-        else:
-            self.draw_settings_keys(surf, body, mouse)
-        buttons = [("close", "닫기", pygame.Rect(p.right - 144, p.bottom - 52, 120, 36))]
-        if self.settings_tab == "keys":
-            buttons.insert(0, ("reset", "기본값", pygame.Rect(body.x, p.bottom - 52, 120, 36)))
-        for kind, label, rect in buttons:
-            pygame.draw.rect(surf, (40, 60, 95) if rect.collidepoint(mouse) else (28, 38, 58), rect, border_radius=6)
-            pygame.draw.rect(surf, ui.BORDER, rect, 1, border_radius=6)
-            ui.text(surf, label, rect.center, 16, anchor="center")
-            self.settings_rects.append((kind, rect))
-
-    def draw_settings_keys(self, surf, body, mouse):
-        y = body.y
-        for action, label in ACTIONS:
-            ui.text(surf, label, (body.x + 6, y + 14), 15, anchor="midleft")
-            box = pygame.Rect(body.right - 146, y, 140, 28)
-            waiting = self.rebinding == action
-            hover = box.collidepoint(mouse)
-            pygame.draw.rect(surf, (40, 60, 95) if waiting or hover else (24, 32, 48), box, border_radius=4)
-            pygame.draw.rect(surf, ui.HIGHLIGHT if waiting else ui.BORDER, box, 1, border_radius=4)
-            ui.text(surf, "키 입력..." if waiting else self.binds.name(action), box.center, 15,
-                    ui.GOLD if waiting else ui.TEXT, anchor="center", bold=not waiting)
-            self.settings_rects.append((action, box))
-            y += 34
-
-    def draw_slider(self, surf, kind, x, y, k, label, on=True):
-        """이름 + 끌 수 있는 막대 + 값 글자. k 는 0~1."""
-        track = pygame.Rect(x, y, 300, 14)
-        self.slider_rects[kind] = track
-        pygame.draw.rect(surf, (24, 32, 48), track, border_radius=6)
-        pygame.draw.rect(surf, ui.BORDER, track, 1, border_radius=6)
-        fill = pygame.Rect(track.x, track.y, int(track.width * k), track.height)
-        if fill.width > 0:
-            pygame.draw.rect(surf, (90, 140, 230) if on else (80, 85, 100), fill, border_radius=6)
-        pygame.draw.circle(surf, ui.HIGHLIGHT, (track.x + int(track.width * k), track.centery), 8)
-        ui.text(surf, label, (track.right + 18, track.centery), 16, anchor="midleft")
-
-    def draw_settings_mouse(self, surf, body):
-        y = body.y + 8
-        ui.text(surf, "마우스 감도", (body.x + 6, y), 17, bold=True)
-        sens = self.app.mouse_sens
-        self.draw_slider(surf, "sens", body.x + 6, y + 40, (sens - SENS_MIN) / (SENS_MAX - SENS_MIN), f"{sens:.1f}")
-
-    def draw_settings_sound(self, surf, body, mouse):
-        # 효과음 크기: 막대를 끌어서 바꾸고, 아래 버튼으로 끄고 켠다
-        y = body.y + 8
-        ui.text(surf, "효과음 크기", (body.x + 6, y), 17, bold=True)
-        shown = 0.0 if self.audio.muted else self.audio.volume
-        self.draw_slider(surf, "volume", body.x + 6, y + 40, shown, f"{round(shown * 100)}%", not self.audio.muted)
-        mute_box = pygame.Rect(body.x + 6, y + 84, 160, 34)
-        pygame.draw.rect(surf, (40, 60, 95) if mute_box.collidepoint(mouse) else (24, 32, 48), mute_box, border_radius=4)
-        pygame.draw.rect(surf, ui.BORDER, mute_box, 1, border_radius=4)
-        ui.text(surf, "소리 켜기" if self.audio.muted else "소리 끄기", mute_box.center, 16, anchor="center")
-        self.settings_rects.append(("mute", mute_box))
 
     def click_ui(self, pos):
         for slot, rect in self.levelup_rects:
@@ -2667,8 +2522,7 @@ class GameScene(Scene):
         elif self.hud_tooltip and not self.settings_open:
             mouse, tip = self.hud_tooltip
             self.draw_tooltip(surf, mouse, *tip)
-        if self.settings_open:
-            self.draw_settings(surf)
+        self.app.settings_ui.draw(surf)
 
     def draw_world_bars(self, surf):
         cam = self.app.renderer.camera
@@ -3415,14 +3269,18 @@ class GameScene(Scene):
         top_r = pygame.Rect(0, 0, s_top, s_top)
         top_r.midtop = (area.centerx, y)
         self.draw_tree_node(surf, top_r, view, view in owned, mouse, sel)
-        y = top_r.bottom + 10
+        # 목표 아이템 밑에도 재료처럼 값: 가진 재료를 빼고 지금 내야 하는 가격 (이미 가졌으면 초록)
+        _vok, _vused, vprice, _vwhy = gamedata.can_buy(owned, view, INVENTORY_SLOTS)
+        vcol = (120, 220, 140) if view in owned else (ui.GOLD if gold >= vprice else (200, 130, 110))
+        ui.text(surf, f"{vprice}", (top_r.centerx, top_r.bottom + 4), 12, vcol, anchor="midtop", shadow=False)
+        y = top_r.bottom + 26
         if comps:
             n = len(comps)
             gap = 16
             total = n * s_c + (n - 1) * gap
-            cy = top_r.bottom + 34
-            mid_y = top_r.bottom + 16
-            pygame.draw.line(surf, (90, 100, 130), (top_r.centerx, top_r.bottom), (top_r.centerx, mid_y), 2)
+            cy = top_r.bottom + 46
+            mid_y = top_r.bottom + 30
+            pygame.draw.line(surf, (90, 100, 130), (top_r.centerx, top_r.bottom + 20), (top_r.centerx, mid_y), 2)
             left_items = list(owned)
             for k, c in enumerate(comps):
                 r = pygame.Rect(area.centerx - total // 2 + k * (s_c + gap), cy, s_c, s_c)

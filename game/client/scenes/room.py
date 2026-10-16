@@ -4,6 +4,7 @@ import pygame
 from ...shared.constants import BLUE, RED, TEAM_NAMES
 from .. import ui
 from ..app import HEIGHT, WIDTH, Scene
+from ..settings_panel import settings_button
 
 COL_X = {BLUE: 110, RED: 690}
 COL_W = 480
@@ -14,6 +15,7 @@ class RoomScene(Scene):
     def on_enter(self):
         self.btn_start = ui.Button((WIDTH // 2 - 130, 600, 260, 54), "게임 시작", self.start, color=(40, 130, 80), size=20)
         self.btn_leave = ui.Button((40, 650, 140, 40), "방 나가기", self.leave, color=(90, 45, 55))
+        self.btn_settings = settings_button(self.app, (WIDTH - 180, 650, 140, 40))
         self.slot_buttons = []
 
     @property
@@ -64,9 +66,11 @@ class RoomScene(Scene):
         return btns
 
     def handle_event(self, e):
+        if self.app.settings_ui.handle_event(e):
+            return
         if not self.room:
             return
-        if self.btn_leave.handle(e):
+        if self.btn_leave.handle(e) or self.btn_settings.handle(e):
             return
         if self.is_host():
             if self.btn_start.handle(e):
@@ -135,9 +139,11 @@ class RoomScene(Scene):
         else:
             ui.text(surf, "방장 대기 중", (WIDTH // 2, 625), 18, ui.TEXT_DIM, anchor="center")
         self.btn_leave.draw(surf)
+        self.btn_settings.draw(surf)
 
         # 채팅 (최근 몇 줄)
         y = 520
         for _, name, msg in self.app.chat[-3:]:
             ui.text(surf, f"{name}: {msg}", (WIDTH - 40, y), 14, ui.TEXT_DIM, anchor="topright")
             y += 18
+        self.app.settings_ui.draw(surf)

@@ -5,6 +5,7 @@ import pygame
 
 from .. import ui
 from ..app import HEIGHT, WIDTH, Scene
+from ..settings_panel import settings_button
 
 
 class TitleScene(Scene):
@@ -16,6 +17,7 @@ class TitleScene(Scene):
         self.buttons = [
             ui.Button((cx - 160, 400, 320, 48), "플레이", self.play, color=(40, 100, 170), size=18),
             ui.Button((cx - 160, 460, 320, 38), "종료", self.quit, color=(80, 40, 50)),
+            settings_button(self.app),
         ]
 
     def _name(self):
@@ -30,6 +32,8 @@ class TitleScene(Scene):
         self.app.running = False
 
     def handle_event(self, e):
+        if self.app.settings_ui.handle_event(e):
+            return
         for inp in self.inputs:
             inp.handle(e)
         for b in self.buttons:
@@ -50,3 +54,4 @@ class TitleScene(Scene):
             inp.draw(surf)
         for b in self.buttons:
             b.draw(surf)
+        self.app.settings_ui.draw(surf)

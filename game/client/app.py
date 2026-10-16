@@ -110,6 +110,8 @@ class App:
         ui.set_mouse_source(self.window_mouse_pos)
         self.audio = Audio()              # 효과음 (data/sounds.json). 소리 크기는 ESC 설정 창에서 변경
         self.audio.preload()
+        from .settings_panel import SettingsPanel
+        self.settings_ui = SettingsPanel(self)  # 설정 창 (인게임 ESC, 시작 화면·로비·대기실의 설정 버튼이 함께 쓴다)
         ui.set_sfx(self.audio.play)
         self.net = NetClient()
         self.server = None          # 이 프로세스에서 띄운 서버

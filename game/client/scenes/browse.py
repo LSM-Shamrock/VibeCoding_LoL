@@ -10,6 +10,7 @@ from ...shared.constants import DEFAULT_PORT
 from .. import ui
 from ..app import HEIGHT, WIDTH, Scene, local_ip
 from ..lan import LanFinder
+from ..settings_panel import settings_button
 
 ADDR_Y = 584                    # 주소·포트 칸 높이 (위의 '주소로 직접 접속 / 포트' 글자와 살짝 띄운다)
 
@@ -34,7 +35,7 @@ class BrowseScene(Scene):
         self.btn_open = ui.Button((830, 190, 340, 54), "방 열기", self.open_room, color=(40, 110, 180), size=18)
         self.btn_connect = ui.Button((1040, ADDR_Y, 130, 40), "방 열기", self.connect_addr, color=(40, 110, 180))
         self.btn_back = ui.Button((1030, 650, 150, 40), "뒤로", self.back, color=(90, 45, 55))
-        self.buttons = [self.btn_join, self.btn_open, self.btn_connect, self.btn_back]
+        self.buttons = [self.btn_join, self.btn_open, self.btn_connect, self.btn_back, settings_button(self.app)]
         self.layout_addr()
 
     def on_exit(self):
@@ -109,6 +110,8 @@ class BrowseScene(Scene):
         self.app.set_scene(TitleScene(self.app))
 
     def handle_event(self, e):
+        if self.app.settings_ui.handle_event(e):
+            return
         if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 and self.pre_rect.collidepoint(e.pos):
             order = [2, 3, 1, 0] if self.ip.count(".") == 3 else [0]   # 앞 2자리 → 3자리 → 1자리 → 끄기
             self.pre_n = order[(order.index(self.pre_n) + 1) % len(order)] if self.pre_n in order else order[0]
@@ -203,3 +206,4 @@ class BrowseScene(Scene):
         if pre:
             ui.text(surf, f"앞의 '{pre}' 는 자동 입력됩니다. 칸을 누르면 자리 수가 바뀌고, 전체 주소를 붙여넣어도 됩니다.",
                     (90, 642), 13, ui.TEXT_DIM)
+        self.app.settings_ui.draw(surf)
